@@ -1,0 +1,202 @@
+-- Delta Auto-Click Script
+-- Creates a red button that simulates left mouse clicks with center aim
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+-- Create the ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "DeltaAutoClickGui"
+screenGui.Parent = player.PlayerGui
+
+-- Create the red button
+local button = Instance.new("TextButton")
+button.Name = "AutoClickButton"
+button.Size = UDim2.new(0, 80, 0, 80)
+button.Position = UDim2.new(0, 20, 0.5, -40)
+button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+button.TextColor3 = Color3.fromRGB(255, 255, 255)
+button.Text = "AUTO\nCLICK"
+button.TextScaled = true
+button.Font = Enum.Font.GothamBold
+button.ZIndex = 10
+
+-- Add rounded corners
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = button
+
+-- Add shadow effect
+local shadow = Instance.new("UIStroke")
+shadow.Color = Color3.fromRGB(0, 0, 0)
+shadow.Thickness = 3
+shadow.Parent = button
+
+-- Variables for auto-click functionality
+local isAutoClicking = false
+local clickConnection = nil
+local aimLockConnection = nil
+
+-- Function to simulate mouse click
+function simulateMouseClick()
+    -- Create and fire mouse click events
+    local input = {
+        UserInputType = Enum.UserInputType.MouseButton1,
+        KeyCode = Enum.KeyCode.ButtonR2,
+        Position = Vector2.new(mouse.ViewSizeX / 2, mouse.ViewSizeY / 2),
+        UserInputState = Enum.UserInputState.Begin
+    }
+    
+    -- Try to activate the mouse button
+    mouse.Button1Down:Fire()
+    
+    -- For some games, we need to use virtual input
+    virtualInput = game:GetService("VirtualInputManager")
+    virtualInput:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 1)
+    
+    task.wait(0.05) -- Small delay between click down and up
+    
+    -- Release the mouse button
+    mouse.Button1Up:Fire()
+    virtualInput:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 1)
+end
+
+-- Function to lock aim to center
+function lockAimToCenter()
+    if isAutoClicking then
+        -- Get screen center
+        local centerX = mouse.ViewSizeX / 2
+        local centerY = mouse.ViewSizeY / 2
+        
+        -- Move mouse to center (this may not work in all games due to security)
+        pcall(function()
+            virtualInput = game:GetService("VirtualInputManager")
+            virtualInput:SendMouseMoveEvent(centerX, centerY, game)
+        end)
+    end
+end
+
+-- Function to start/stop auto-clicking
+function toggleAutoClick()
+    isAutoClicking = not isAutoClicking
+    
+    if isAutoClicking then
+        -- Start auto-clicking
+        button.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Change to green when active
+        button.Text = "ACTIVE\nCLICKING"
+        
+        -- Create loop for auto-clicking
+        clickConnection = RunService.Heartbeat:Connect(function()
+            if isAutoClicking then
+                simulateMouseClick()
+                -- Small delay between clicks to prevent spam
+                task.wait(0.1) -- Adjust this value to change click speed
+            end
+        end)
+        
+        -- Create loop for aim lock
+        aimLockConnection = RunService.RenderStepped:Connect(function()
+            if isAutoClicking then
+                lockAimToCenter()
+            end
+        end)
+        
+        print("Auto-click started with center aim lock")
+        
+    else
+        -- Stop auto-clicking
+        button.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Change back to red
+        button.Text = "AUTO\nCLICK"
+        
+        -- Disconnect the loops
+        if clickConnection then
+            clickConnection:Disconnect()
+            clickConnection = nil
+        end
+        
+        if aimLockConnection then
+            aimLockConnection:Disconnect()
+            aimLockConnection = nil
+        end
+        
+        print("Auto-click stopped")
+    end
+end
+
+-- Button click event
+button.MouseButton1Click:Connect(toggleAutoClick)
+
+-- Add button animation on hover
+button.MouseEnter:Connect(function()
+    local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(button, tweenInfo, {Size = UDim2.new(0, 85, 0, 85)})
+    tween:Play()
+end)
+
+button.MouseLeave:Connect(function()
+    local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(button, tweenInfo, {Size = UDim2.new(0, 80, 0, 80)})
+    tween:Play()
+end)
+
+-- Make the button draggable
+local dragging = false
+local dragInput
+local dragStart
+local startPos
+
+local function update(input)
+    local delta = input.Position - dragStart
+    button.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+button.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = button.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+button.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        update(input)
+    end
+end)
+
+-- Parent the button to the ScreenGui
+button.Parent = screenGui
+
+print("Delta Auto-Click Script loaded!")
+print("Click the red button to start/stop auto-clicking with center aim lock")
+print("You can drag the button to move it around the screen")
+
+-- Cleanup when player leaves
+player.PlayerGui.ChildRemoved:Connect(function(child)
+    if child == screenGui then
+        isAutoClicking = false
+        if clickConnection then
+            clickConnection:Disconnect()
+        end
+        if aimLockConnection then
+            aimLockConnection:Disconnect()
+        end
+    end
+end)
