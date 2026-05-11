@@ -1,202 +1,278 @@
--- Delta Auto-Click Script
--- Creates a red button that simulates left mouse clicks with center aim
-
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 
--- Create the ScreenGui
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "DeltaAutoClickGui"
-screenGui.Parent = player.PlayerGui
+local cooldownTime = 2.5
+local lastShotTime = 0
+local canShoot = true
 
--- Create the red button
-local button = Instance.new("TextButton")
-button.Name = "AutoClickButton"
-button.Size = UDim2.new(0, 80, 0, 80)
-button.Position = UDim2.new(0, 20, 0.5, -40)
-button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-button.TextColor3 = Color3.fromRGB(255, 255, 255)
-button.Text = "AUTO\nCLICK"
-button.TextScaled = true
-button.Font = Enum.Font.GothamBold
-button.ZIndex = 10
+local readyColor = Color3.fromRGB(46, 204, 113)
+local cooldownColor = Color3.fromRGB(231, 76, 60)
 
--- Add rounded corners
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 12)
-corner.Parent = button
+local screenGui = nil
+local button = nil
+local statusLabel = nil
 
--- Add shadow effect
-local shadow = Instance.new("UIStroke")
-shadow.Color = Color3.fromRGB(0, 0, 0)
-shadow.Thickness = 3
-shadow.Parent = button
+local camera = Workspace.CurrentCamera
+local localBeam = ReplicatedStorage:FindFirstChild("BindableEvents"):FindFirstChild("LocalBeam")
+local killedRemote = ReplicatedStorage:FindFirstChild("Remotes"):FindFirstChild("Killed")
 
--- Variables for auto-click functionality
-local isAutoClicking = false
-local clickConnection = nil
-local aimLockConnection = nil
+local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- Function to simulate mouse click
-function simulateMouseClick()
-    -- Create and fire mouse click events
-    local input = {
-        UserInputType = Enum.UserInputType.MouseButton1,
-        KeyCode = Enum.KeyCode.ButtonR2,
-        Position = Vector2.new(mouse.ViewSizeX / 2, mouse.ViewSizeY / 2),
-        UserInputState = Enum.UserInputState.Begin
-    }
-    
-    -- Try to activate the mouse button
-    mouse.Button1Down:Fire()
-    
-    -- For some games, we need to use virtual input
-    virtualInput = game:GetService("VirtualInputManager")
-    virtualInput:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 1)
-    
-    task.wait(0.05) -- Small delay between click down and up
-    
-    -- Release the mouse button
-    mouse.Button1Up:Fire()
-    virtualInput:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 1)
-end
+local function isValidTarget(otherPlayer)
+    if not otherPlayer or otherPlayer == player then return false end
+    if not otherPlayer.Character then return false end
+    local hum = otherPlayer.Character:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
 
--- Function to lock aim to center
-function lockAimToCenter()
-    if isAutoClicking then
-        -- Get screen center
-        local centerX = mouse.ViewSizeX / 2
-        local centerY = mouse.ViewSizeY / 2
-        
-        -- Move mouse to center (this may not work in all games due to security)
-        pcall(function()
-            virtualInput = game:GetService("VirtualInputManager")
-            virtualInput:SendMouseMoveEvent(centerX, centerY, game)
-        end)
+    local myGame = player:GetAttribute("Game")
+    local theirGame = otherPlayer:GetAttribute("Game")
+    if myGame and theirGame and myGame ~= theirGame then
+        return false
     end
+
+    local myTeam = player:GetAttribute("Team")
+    local theirTeam = otherPlayer:GetAttribute("Team")
+    if myTeam and theirTeam and myTeam == theirTeam then
+        return false
+    end
+
+    return true
 end
 
--- Function to start/stop auto-clicking
-function toggleAutoClick()
-    isAutoClicking = not isAutoClicking
-    
-    if isAutoClicking then
-        -- Start auto-clicking
-        button.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Change to green when active
-        button.Text = "ACTIVE\nCLICKING"
-        
-        -- Create loop for auto-clicking
-        clickConnection = RunService.Heartbeat:Connect(function()
-            if isAutoClicking then
-                simulateMouseClick()
-                -- Small delay between clicks to prevent spam
-                task.wait(0.1) -- Adjust this value to change click speed
+local function getWeapon()
+    local char = player.Character
+    if not char then return nil end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool:FindFirstChild("fire") then
+            return tool
+        end
+    end
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, tool in pairs(bp:GetChildren()) do
+            if tool:IsA("Tool") and tool:FindFirstChild("fire") then
+                tool.Parent = char
+                return tool
             end
-        end)
-        
-        -- Create loop for aim lock
-        aimLockConnection = RunService.RenderStepped:Connect(function()
-            if isAutoClicking then
-                lockAimToCenter()
-            end
-        end)
-        
-        print("Auto-click started with center aim lock")
-        
-    else
-        -- Stop auto-clicking
-        button.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Change back to red
-        button.Text = "AUTO\nCLICK"
-        
-        -- Disconnect the loops
-        if clickConnection then
-            clickConnection:Disconnect()
-            clickConnection = nil
         end
-        
-        if aimLockConnection then
-            aimLockConnection:Disconnect()
-            aimLockConnection = nil
-        end
-        
-        print("Auto-click stopped")
     end
+    return nil
 end
 
--- Button click event
-button.MouseButton1Click:Connect(toggleAutoClick)
-
--- Add button animation on hover
-button.MouseEnter:Connect(function()
-    local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local tween = TweenService:Create(button, tweenInfo, {Size = UDim2.new(0, 85, 0, 85)})
-    tween:Play()
-end)
-
-button.MouseLeave:Connect(function()
-    local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local tween = TweenService:Create(button, tweenInfo, {Size = UDim2.new(0, 80, 0, 80)})
-    tween:Play()
-end)
-
--- Make the button draggable
-local dragging = false
-local dragInput
-local dragStart
-local startPos
-
-local function update(input)
-    local delta = input.Position - dragStart
-    button.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+local function hasClearLineOfSight(targetPlayer)
+    local char = player.Character
+    local tChar = targetPlayer.Character
+    if not char or not tChar then return false end
+    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    local tRoot = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso")
+    if not myRoot or not tRoot then return false end
+    local dir = (tRoot.Position - myRoot.Position).Unit
+    local dist = (tRoot.Position - myRoot.Position).Magnitude
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {char, tChar}
+    params.IgnoreWater = true
+    return workspace:Raycast(myRoot.Position, dir * dist, params) == nil
 end
 
-button.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = button.Position
-        
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
+local function getNearestVisibleEnemy()
+    local char = player.Character
+    if not char then return nil end
+    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    if not myRoot then return nil end
+
+    local nearest, minDist = nil, math.huge
+    for _, other in pairs(Players:GetPlayers()) do
+        if isValidTarget(other) then
+            local oRoot = other.Character:FindFirstChild("HumanoidRootPart") or other.Character:FindFirstChild("Torso")
+            if oRoot then
+                local dist = (myRoot.Position - oRoot.Position).Magnitude
+                if dist < minDist and hasClearLineOfSight(other) then
+                    minDist = dist
+                    nearest = other
+                end
             end
-        end)
-    end
-end)
-
-button.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        dragInput = input
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        update(input)
-    end
-end)
-
--- Parent the button to the ScreenGui
-button.Parent = screenGui
-
-print("Delta Auto-Click Script loaded!")
-print("Click the red button to start/stop auto-clicking with center aim lock")
-print("You can drag the button to move it around the screen")
-
--- Cleanup when player leaves
-player.PlayerGui.ChildRemoved:Connect(function(child)
-    if child == screenGui then
-        isAutoClicking = false
-        if clickConnection then
-            clickConnection:Disconnect()
-        end
-        if aimLockConnection then
-            aimLockConnection:Disconnect()
         end
     end
+    return nearest
+end
+
+local function shootEnemy(targetPlayer)
+    local char = player.Character
+    if not char then return false end
+    local weapon = getWeapon()
+    if not weapon then return false end
+    local handle = weapon:FindFirstChild("Handle")
+    if not handle then return false end
+    local tRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Torso")
+    if not tRoot then return false end
+
+    local startPos = handle.Position
+    local hitPos = tRoot.Position
+
+    if localBeam then pcall(function() localBeam:Fire(handle, hitPos) end) end
+    local fireRemote = weapon:FindFirstChild("fire")
+    if fireRemote then pcall(function() fireRemote:FireServer() end) end
+    local beamRemote = weapon:FindFirstChild("showBeam")
+    if beamRemote then pcall(function() beamRemote:FireServer(hitPos, startPos, handle) end) end
+    local killRemote = weapon:FindFirstChild("kill")
+    if killRemote then
+        local dir = (hitPos - startPos).Unit
+        pcall(function() killRemote:FireServer(targetPlayer, dir) end)
+    end
+    if killedRemote then pcall(function() killedRemote:FireServer(targetPlayer) end) end
+
+    return true
+end
+
+local function createGUI()
+    if screenGui then screenGui:Destroy() end
+
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AimbotButtonGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.Parent = playerGui
+
+    local shadow = Instance.new("Frame")
+    shadow.Size = UDim2.new(0, 76, 0, 76)
+    shadow.AnchorPoint = Vector2.new(1, 1)
+    shadow.Position = UDim2.new(1, -20, 1, -180)
+    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.BackgroundTransparency = 0.85
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = 9
+    shadow.Parent = screenGui
+    Instance.new("UICorner", shadow).CornerRadius = UDim.new(0, 16)
+
+    button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, 70, 0, 70)
+    button.AnchorPoint = Vector2.new(1, 1)
+    button.Position = UDim2.new(1, -23, 1, -183)
+    button.BackgroundColor3 = readyColor
+    button.BackgroundTransparency = 0.25
+    button.BorderSizePixel = 0
+    button.Text = ""
+    button.AutoButtonColor = false
+    button.ZIndex = 10
+    button.Parent = screenGui
+
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 14)
+
+    local buttonStroke = Instance.new("UIStroke", button)
+    buttonStroke.Color = Color3.fromRGB(255, 255, 255)
+    buttonStroke.Thickness = 2
+    buttonStroke.Transparency = 0.6
+    buttonStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    buttonStroke.LineJoinMode = Enum.LineJoinMode.Round
+
+    local gradient = Instance.new("UIGradient", button)
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 200, 200))
+    })
+    gradient.Rotation = 90
+    gradient.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.9),
+        NumberSequenceKeypoint.new(1, 0.95)
+    })
+
+    local icon = Instance.new("ImageLabel")
+    icon.Name = "Icon"
+    icon.Size = UDim2.new(0, 26, 0, 26)
+    icon.Position = UDim2.new(0.5, 0, 0.5, -2)
+    icon.AnchorPoint = Vector2.new(0.5, 0.5)
+    icon.BackgroundTransparency = 1
+    icon.Image = "rbxassetid://15403175166"
+    icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
+    icon.ZIndex = 11
+    icon.Parent = button
+
+    statusLabel = Instance.new("TextLabel")
+    statusLabel.Name = "StatusLabel"
+    statusLabel.Size = UDim2.new(1, 0, 0, 14)
+    statusLabel.Position = UDim2.new(0.5, 0, 1, 6)
+    statusLabel.AnchorPoint = Vector2.new(0.5, 0)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "READY"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    statusLabel.TextSize = 11
+    statusLabel.Font = Enum.Font.GothamBold
+    statusLabel.TextStrokeTransparency = 0.4
+    statusLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    statusLabel.ZIndex = 11
+    statusLabel.Parent = button
+
+    local function setButtonState(isReady)
+        local targetColor = isReady and readyColor or cooldownColor
+        if statusLabel then
+            statusLabel.Text = isReady and "READY" or "WAIT"
+        end
+        TweenService:Create(button, tweenInfo, {BackgroundColor3 = targetColor}):Play()
+    end
+
+    local function instantShoot()
+        if not canShoot then return end
+        if not player.Character or not player.Character:FindFirstChild("Humanoid") then return end
+        if not getWeapon() then return end
+
+        local target = getNearestVisibleEnemy()
+        if target and shootEnemy(target) then
+            canShoot = false
+            lastShotTime = tick()
+            setButtonState(false)
+
+            task.spawn(function()
+                local scaleTween = TweenService:Create(button, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                    Size = UDim2.new(0, 85, 0, 85)
+                })
+                scaleTween:Play()
+                scaleTween.Completed:Connect(function()
+                    TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {
+                        Size = UDim2.new(0, 70, 0, 70)
+                    }):Play()
+                end)
+                if icon then
+                    TweenService:Create(icon, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), {
+                        Rotation = icon.Rotation + 360
+                    }):Play()
+                end
+            end)
+
+            task.spawn(function()
+                while tick() - lastShotTime < cooldownTime do task.wait(0.1) end
+                canShoot = true
+                setButtonState(true)
+            end)
+        end
+    end
+
+    button.MouseButton1Down:Connect(instantShoot)
+    button.TouchStarted:Connect(instantShoot)
+
+    canShoot = true
+    lastShotTime = 0
+    setButtonState(true)
+end
+
+player.CharacterAdded:Connect(function()
+    task.wait(0.1)
+    createGUI()
 end)
+
+if player.Character then
+    createGUI()
+else
+    player.CharacterAdded:Wait()
+    createGUI()
+end
+
+print("Instant Aimbot loaded – shoots on press!")
