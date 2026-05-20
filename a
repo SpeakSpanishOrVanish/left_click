@@ -1,36 +1,6 @@
-local replicatedStorage = game:GetService("ReplicatedStorage")
-local cincoFolder = replicatedStorage:FindFirstChild("CincoDeMayo2026")
-local remoteEvent = cincoFolder and cincoFolder:FindFirstChild("RemoteEvent")
-
-print("=== CINCO DEBUG ===")
-print("CincoDeMayo2026 folder exists?", cincoFolder ~= nil)
-if cincoFolder then
-    print("Folder children:")
-    for _, child in ipairs(cincoFolder:GetChildren()) do
-        print("  -", child.Name, "::", child.ClassName)
-    end
-end
-
-print("RemoteEvent found?", remoteEvent ~= nil)
-if remoteEvent then
-    print("RemoteEvent ClassName:", remoteEvent.ClassName)
-    print("IsA RemoteEvent?", remoteEvent:IsA("RemoteEvent"))
-    
-    -- Try firing
-    local success, err = pcall(function()
-        remoteEvent:FireServer("collect")
-    end)
-    print("FireServer result:", success, err or "no error")
-    
-    -- Also try with unpack style
-    local args = { [1] = "collect" }
-    local success2, err2 = pcall(function()
-        remoteEvent:FireServer(unpack(args))
-    end)
-    print("FireServer (unpack) result:", success2, err2 or "no error")
-else
-    print("RemoteEvent not found! Possible names?")
-    if cincoFolder then
-        print("Available:", table.concat(debug ?))
+print("=== Parts with TouchInterest ===")
+for _, obj in ipairs(workspace:GetDescendants()) do
+    if obj:IsA("TouchInterest") and obj.Parent and obj.Parent:IsA("BasePart") then
+        print(obj.Parent:GetFullName())
     end
 end
