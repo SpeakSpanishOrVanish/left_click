@@ -1,4 +1,24 @@
-local event = game:GetService("ReplicatedStorage").Packages.Networking["RE/Events/CollectEventSpawnable"]
-event.OnClientEvent:Connect(function(...)
-    print("Remote received arguments:", ...)
-end)
+-- Scan for potential pickups (look for TouchInterest or certain name patterns)
+local pickups = {}
+for _, obj in ipairs(workspace:GetDescendants()) do
+    if obj:IsA("BasePart") then
+        -- Check for TouchInterest (means it can be touched)
+        local hasTouch = false
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("TouchInterest") then
+                hasTouch = true
+                break
+            end
+        end
+        -- Also check common names (add more as you see)
+        local name = obj.Name:lower()
+        if hasTouch or name:find("coin") or name:find("taco") or name:find("cinco") or name:find("mayo") or name:find("piñata") or name:find("spawn") or name:find("pickup") then
+            table.insert(pickups, obj)
+        end
+    end
+end
+
+print("Found " .. #pickups .. " potential pickups:")
+for i, p in ipairs(pickups) do
+    print(i .. ": " .. p:GetFullName() .. " | Position: " .. tostring(p.Position))
+end
