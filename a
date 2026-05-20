@@ -1,6 +1,29 @@
-print("=== Parts with TouchInterest ===")
-for _, obj in ipairs(workspace:GetDescendants()) do
-    if obj:IsA("TouchInterest") and obj.Parent and obj.Parent:IsA("BasePart") then
-        print(obj.Parent:GetFullName())
-    end
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Networking = ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("Networking")
+local CollectEvent = Networking and Networking:FindFirstChild("RE/Events/CollectEventSpawnable")
+
+print("Remote found:", CollectEvent ~= nil)
+
+if CollectEvent then
+    -- Try firing with a simple argument (maybe it needs a position)
+    local success, result = pcall(function()
+        CollectEvent:FireServer()
+    end)
+    print("FireServer (no args) -> success:", success, "result:", result)
+    
+    -- Try firing with a dummy position (like your character's position)
+    local char = game.Players.LocalPlayer.Character
+    local pos = char and char:FindFirstChild("HumanoidRootPart") and char.HumanoidRootPart.Position or Vector3.new(0,0,0)
+    local success2, result2 = pcall(function()
+        CollectEvent:FireServer(pos)
+    end)
+    print("FireServer (position) -> success:", success2, "result:", result2)
+    
+    -- Try firing with a table argument
+    local success3, result3 = pcall(function()
+        CollectEvent:FireServer({position = pos})
+    end)
+    print("FireServer (table) -> success:", success3, "result:", result3)
+else
+    warn("Remote not found. Check path again.")
 end
