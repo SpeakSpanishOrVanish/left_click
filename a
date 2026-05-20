@@ -1,29 +1,4 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Networking = ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("Networking")
-local CollectEvent = Networking and Networking:FindFirstChild("RE/Events/CollectEventSpawnable")
-
-print("Remote found:", CollectEvent ~= nil)
-
-if CollectEvent then
-    -- Try firing with a simple argument (maybe it needs a position)
-    local success, result = pcall(function()
-        CollectEvent:FireServer()
-    end)
-    print("FireServer (no args) -> success:", success, "result:", result)
-    
-    -- Try firing with a dummy position (like your character's position)
-    local char = game.Players.LocalPlayer.Character
-    local pos = char and char:FindFirstChild("HumanoidRootPart") and char.HumanoidRootPart.Position or Vector3.new(0,0,0)
-    local success2, result2 = pcall(function()
-        CollectEvent:FireServer(pos)
-    end)
-    print("FireServer (position) -> success:", success2, "result:", result2)
-    
-    -- Try firing with a table argument
-    local success3, result3 = pcall(function()
-        CollectEvent:FireServer({position = pos})
-    end)
-    print("FireServer (table) -> success:", success3, "result:", result3)
-else
-    warn("Remote not found. Check path again.")
-end
+local event = game:GetService("ReplicatedStorage").Packages.Networking["RE/Events/CollectEventSpawnable"]
+event.OnClientEvent:Connect(function(...)
+    print("Remote received arguments:", ...)
+end)
