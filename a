@@ -1,23 +1,28 @@
--- Simple Remote Spam (no touching, no crashes)
+-- Simple Spam of the working remote
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Networking = ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("Networking")
-local CollectEvent = Networking and Networking:FindFirstChild("RE/Events/CollectEventSpawnable")
-
-if not CollectEvent then
-    warn("Remote not found")
-    return
-end
+local Packages = ReplicatedStorage:FindFirstChild("Packages")
+if not Packages then warn("Packages not found") return end
+local Networking = Packages:FindFirstChild("Networking")
+if not Networking then warn("Networking not found") return end
+local CollectEvent = Networking:FindFirstChild("RE/Events/CollectEventSpawnable")
+if not CollectEvent then warn("CollectEvent not found") return end
 
 _G.SpamActive = false
 _G.SpamDelay = 2  -- seconds between fires
 
 local function fire()
     if not _G.SpamActive then return end
-    pcall(function() CollectEvent:FireServer() end)
-    print("[Spam] Fired CollectEventSpawnable")
+    local success, err = pcall(function()
+        CollectEvent:FireServer()
+    end)
+    if success then
+        print("[Spam] Fired")
+    else
+        warn("[Spam] Error: " .. tostring(err))
+    end
 end
 
--- Main loop
+-- Spam loop
 task.spawn(function()
     while true do
         fire()
@@ -25,7 +30,7 @@ task.spawn(function()
     end
 end)
 
--- Toggle button
+-- On‑screen toggle button
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "RemoteSpam"
 screenGui.ResetOnSpawn = false
@@ -47,9 +52,9 @@ corner.Parent = btn
 
 btn.MouseButton1Click:Connect(function()
     _G.SpamActive = not _G.SpamActive
-    btn.Text = _G.SpamActive and "Stop Spam" : "Start Spam"
+    btn.Text = _G.SpamActive and "Stop Spam" or "Start Spam"
     btn.BackgroundColor3 = _G.SpamActive and Color3.fromRGB(0,180,0) or Color3.fromRGB(40,40,50)
     print(_G.SpamActive and "Spam started" or "Spam stopped")
 end)
 
-print("Remote spam ready. Click the button to start. Delay = 2 seconds (change _G.SpamDelay if needed).")
+print("Ready. Click the button to start spamming every " .. _G.SpamDelay .. " seconds.")
