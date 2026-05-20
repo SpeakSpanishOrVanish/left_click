@@ -1,4 +1,160 @@
-local event = game:GetService("ReplicatedStorage").Packages.Networking["RE/Events/CollectEventSpawnable"]
-event.OnClientEvent:Connect(function(...)
-    print("Remote received arguments:", ...)
+-- TEST SCRIPT: Only collects Sombreros in YOUR current map
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+_G.TestAutoCollect = false
+local collectedPickups = {}
+local currentMapZones = nil
+local lastZoneUpdate = 0
+
+-- Find which map the player is in and get its spawn zones
+local function updateCurrentMapZones()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local playerPos = hrp.Position
+
+    local bestMap = nil
+    local bestDist = math.huge
+    for _, map in ipairs(workspace.Maps:GetChildren()) do
+        local primary = map:FindFirstChild("PrimaryPart") or map:FindFirstChildWhichIsA("BasePart")
+        if primary then
+            local dist = (playerPos - primary.Position).Magnitude
+            if dist < bestDist then
+                bestDist = dist
+                bestMap = map
+            end
+        end
+    end
+
+    if bestMap then
+        local zones = bestMap:FindFirstChild("ItemSpawnZones")
+        if zones then
+            currentMapZones = {}
+            for _, zone in ipairs(zones:GetChildren()) do
+                if zone:IsA("BasePart") then
+                    table.insert(currentMapZones, zone)
+                end
+            end
+            print("[Test] Found map:", bestMap.Name, "with", #currentMapZones, "spawn zones")
+            return true
+        end
+    end
+    currentMapZones = nil
+    print("[Test] Could not determine current map zones")
+    return false
+end
+
+-- Check if a pickup belongs to your current map
+local function isPickupInCurrentMap(pickupPos)
+    if not currentMapZones or #currentMapZones == 0 then
+        return false
+    end
+    for _, zone in ipairs(currentMapZones) do
+        if (pickupPos - zone.Position).Magnitude <= 500 then
+            return true
+        end
+    end
+    return false
+end
+
+-- Find valid pickups (only your map)
+local function getValidPickups()
+    local pickups = {}
+    local spawnablesClient = workspace:FindFirstChild("Spawnables") and workspace.Spawnables:FindFirstChild("SpawnablesClient")
+    if not spawnablesClient then return pickups end
+
+    local char = LocalPlayer.Character
+    if not char then return pickups end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return pickups end
+
+    -- Update map zones every few seconds
+    if tick() - lastZoneUpdate > 5 then
+        updateCurrentMapZones()
+        lastZoneUpdate = tick()
+    end
+
+    for _, obj in ipairs(spawnablesClient:GetChildren()) do
+        if obj:IsA("BasePart") and obj:FindFirstChild("TouchInterest") and not collectedPickups[obj] then
+            if isPickupInCurrentMap(obj.Position) then
+                table.insert(pickups, obj)
+            end
+        end
+    end
+    return pickups
+end
+
+-- Touch a pickup
+local function touchPickup(part)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    collectedPickups[part] = true
+    local success = pcall(function()
+        firetouchinterest(hrp, part, 0)
+        task.wait(0.05)
+        firetouchinterest(hrp, part, 1)
+    end)
+    if success then
+        print("[Test] Collected:", part.Name, "at", part.Position)
+    else
+        collectedPickups[part] = nil
+    end
+    task.wait(0.1)
+end
+
+-- Main loop
+task.spawn(function()
+    while true do
+        if _G.TestAutoCollect then
+            local pickups = getValidPickups()
+            if #pickups > 0 then
+                touchPickup(pickups[1])
+                task.wait(2) -- 2 second delay
+            else
+                task.wait(0.5)
+            end
+        else
+            task.wait(0.5)
+        end
+    end
 end)
+
+-- Simple on‑screen button
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TestAutoCollect"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = game:CoreGui
+
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(0, 200, 0, 50)
+btn.Position = UDim2.new(0.5, -100, 0.85, 0)
+btn.Text = "Start Auto-Collect (Test)"
+btn.BackgroundColor3 = Color3.fromRGB(40,40,50)
+btn.TextColor3 = Color3.new(1,1,1)
+btn.Font = Enum.Font.GothamBold
+btn.TextSize = 16
+btn.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = btn
+
+btn.MouseButton1Click:Connect(function()
+    _G.TestAutoCollect = not _G.TestAutoCollect
+    btn.Text = _G.TestAutoCollect and "Stop Auto-Collect (Test)" or "Start Auto-Collect (Test)"
+    btn.BackgroundColor3 = _G.TestAutoCollect and Color3.fromRGB(0,180,0) or Color3.fromRGB(40,40,50)
+    if _G.TestAutoCollect then
+        print("[Test] Auto‑collect ENABLED – will only touch pickups in your current map")
+    else
+        print("[Test] Auto‑collect DISABLED")
+        collectedPickups = {}
+    end
+end)
+
+print("[Test] Script loaded. Click the on‑screen button to start.")
+print("[Test] Only Sombreros in YOUR current map will be collected (2 sec delay).")
