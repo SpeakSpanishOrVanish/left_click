@@ -1,278 +1,36 @@
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local cincoFolder = replicatedStorage:FindFirstChild("CincoDeMayo2026")
+local remoteEvent = cincoFolder and cincoFolder:FindFirstChild("RemoteEvent")
 
-local player = Players.LocalPlayer
-
-local cooldownTime = 2.5
-local lastShotTime = 0
-local canShoot = true
-
-local readyColor = Color3.fromRGB(46, 204, 113)
-local cooldownColor = Color3.fromRGB(231, 76, 60)
-
-local screenGui = nil
-local button = nil
-local statusLabel = nil
-
-local camera = Workspace.CurrentCamera
-local localBeam = ReplicatedStorage:FindFirstChild("BindableEvents"):FindFirstChild("LocalBeam")
-local killedRemote = ReplicatedStorage:FindFirstChild("Remotes"):FindFirstChild("Killed")
-
-local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
-local function isValidTarget(otherPlayer)
-    if not otherPlayer or otherPlayer == player then return false end
-    if not otherPlayer.Character then return false end
-    local hum = otherPlayer.Character:FindFirstChild("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
-
-    local myGame = player:GetAttribute("Game")
-    local theirGame = otherPlayer:GetAttribute("Game")
-    if myGame and theirGame and myGame ~= theirGame then
-        return false
+print("=== CINCO DEBUG ===")
+print("CincoDeMayo2026 folder exists?", cincoFolder ~= nil)
+if cincoFolder then
+    print("Folder children:")
+    for _, child in ipairs(cincoFolder:GetChildren()) do
+        print("  -", child.Name, "::", child.ClassName)
     end
-
-    local myTeam = player:GetAttribute("Team")
-    local theirTeam = otherPlayer:GetAttribute("Team")
-    if myTeam and theirTeam and myTeam == theirTeam then
-        return false
-    end
-
-    return true
 end
 
-local function getWeapon()
-    local char = player.Character
-    if not char then return nil end
-    for _, tool in pairs(char:GetChildren()) do
-        if tool:IsA("Tool") and tool:FindFirstChild("fire") then
-            return tool
-        end
-    end
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, tool in pairs(bp:GetChildren()) do
-            if tool:IsA("Tool") and tool:FindFirstChild("fire") then
-                tool.Parent = char
-                return tool
-            end
-        end
-    end
-    return nil
-end
-
-local function hasClearLineOfSight(targetPlayer)
-    local char = player.Character
-    local tChar = targetPlayer.Character
-    if not char or not tChar then return false end
-    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    local tRoot = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso")
-    if not myRoot or not tRoot then return false end
-    local dir = (tRoot.Position - myRoot.Position).Unit
-    local dist = (tRoot.Position - myRoot.Position).Magnitude
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Blacklist
-    params.FilterDescendantsInstances = {char, tChar}
-    params.IgnoreWater = true
-    return workspace:Raycast(myRoot.Position, dir * dist, params) == nil
-end
-
-local function getNearestVisibleEnemy()
-    local char = player.Character
-    if not char then return nil end
-    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    if not myRoot then return nil end
-
-    local nearest, minDist = nil, math.huge
-    for _, other in pairs(Players:GetPlayers()) do
-        if isValidTarget(other) then
-            local oRoot = other.Character:FindFirstChild("HumanoidRootPart") or other.Character:FindFirstChild("Torso")
-            if oRoot then
-                local dist = (myRoot.Position - oRoot.Position).Magnitude
-                if dist < minDist and hasClearLineOfSight(other) then
-                    minDist = dist
-                    nearest = other
-                end
-            end
-        end
-    end
-    return nearest
-end
-
-local function shootEnemy(targetPlayer)
-    local char = player.Character
-    if not char then return false end
-    local weapon = getWeapon()
-    if not weapon then return false end
-    local handle = weapon:FindFirstChild("Handle")
-    if not handle then return false end
-    local tRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Torso")
-    if not tRoot then return false end
-
-    local startPos = handle.Position
-    local hitPos = tRoot.Position
-
-    if localBeam then pcall(function() localBeam:Fire(handle, hitPos) end) end
-    local fireRemote = weapon:FindFirstChild("fire")
-    if fireRemote then pcall(function() fireRemote:FireServer() end) end
-    local beamRemote = weapon:FindFirstChild("showBeam")
-    if beamRemote then pcall(function() beamRemote:FireServer(hitPos, startPos, handle) end) end
-    local killRemote = weapon:FindFirstChild("kill")
-    if killRemote then
-        local dir = (hitPos - startPos).Unit
-        pcall(function() killRemote:FireServer(targetPlayer, dir) end)
-    end
-    if killedRemote then pcall(function() killedRemote:FireServer(targetPlayer) end) end
-
-    return true
-end
-
-local function createGUI()
-    if screenGui then screenGui:Destroy() end
-
-    local playerGui = player:WaitForChild("PlayerGui")
-
-    screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "AimbotButtonGui"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.Parent = playerGui
-
-    local shadow = Instance.new("Frame")
-    shadow.Size = UDim2.new(0, 76, 0, 76)
-    shadow.AnchorPoint = Vector2.new(1, 1)
-    shadow.Position = UDim2.new(1, -20, 1, -180)
-    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    shadow.BackgroundTransparency = 0.85
-    shadow.BorderSizePixel = 0
-    shadow.ZIndex = 9
-    shadow.Parent = screenGui
-    Instance.new("UICorner", shadow).CornerRadius = UDim.new(0, 16)
-
-    button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 70, 0, 70)
-    button.AnchorPoint = Vector2.new(1, 1)
-    button.Position = UDim2.new(1, -23, 1, -183)
-    button.BackgroundColor3 = readyColor
-    button.BackgroundTransparency = 0.25
-    button.BorderSizePixel = 0
-    button.Text = ""
-    button.AutoButtonColor = false
-    button.ZIndex = 10
-    button.Parent = screenGui
-
-    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 14)
-
-    local buttonStroke = Instance.new("UIStroke", button)
-    buttonStroke.Color = Color3.fromRGB(255, 255, 255)
-    buttonStroke.Thickness = 2
-    buttonStroke.Transparency = 0.6
-    buttonStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    buttonStroke.LineJoinMode = Enum.LineJoinMode.Round
-
-    local gradient = Instance.new("UIGradient", button)
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 200, 200))
-    })
-    gradient.Rotation = 90
-    gradient.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.9),
-        NumberSequenceKeypoint.new(1, 0.95)
-    })
-
-    local icon = Instance.new("ImageLabel")
-    icon.Name = "Icon"
-    icon.Size = UDim2.new(0, 26, 0, 26)
-    icon.Position = UDim2.new(0.5, 0, 0.5, -2)
-    icon.AnchorPoint = Vector2.new(0.5, 0.5)
-    icon.BackgroundTransparency = 1
-    icon.Image = "rbxassetid://15403175166"
-    icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
-    icon.ZIndex = 11
-    icon.Parent = button
-
-    statusLabel = Instance.new("TextLabel")
-    statusLabel.Name = "StatusLabel"
-    statusLabel.Size = UDim2.new(1, 0, 0, 14)
-    statusLabel.Position = UDim2.new(0.5, 0, 1, 6)
-    statusLabel.AnchorPoint = Vector2.new(0.5, 0)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.Text = "READY"
-    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    statusLabel.TextSize = 11
-    statusLabel.Font = Enum.Font.GothamBold
-    statusLabel.TextStrokeTransparency = 0.4
-    statusLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    statusLabel.ZIndex = 11
-    statusLabel.Parent = button
-
-    local function setButtonState(isReady)
-        local targetColor = isReady and readyColor or cooldownColor
-        if statusLabel then
-            statusLabel.Text = isReady and "READY" or "WAIT"
-        end
-        TweenService:Create(button, tweenInfo, {BackgroundColor3 = targetColor}):Play()
-    end
-
-    local function instantShoot()
-        if not canShoot then return end
-        if not player.Character or not player.Character:FindFirstChild("Humanoid") then return end
-        if not getWeapon() then return end
-
-        local target = getNearestVisibleEnemy()
-        if target and shootEnemy(target) then
-            canShoot = false
-            lastShotTime = tick()
-            setButtonState(false)
-
-            task.spawn(function()
-                local scaleTween = TweenService:Create(button, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                    Size = UDim2.new(0, 85, 0, 85)
-                })
-                scaleTween:Play()
-                scaleTween.Completed:Connect(function()
-                    TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {
-                        Size = UDim2.new(0, 70, 0, 70)
-                    }):Play()
-                end)
-                if icon then
-                    TweenService:Create(icon, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), {
-                        Rotation = icon.Rotation + 360
-                    }):Play()
-                end
-            end)
-
-            task.spawn(function()
-                while tick() - lastShotTime < cooldownTime do task.wait(0.1) end
-                canShoot = true
-                setButtonState(true)
-            end)
-        end
-    end
-
-    button.MouseButton1Down:Connect(instantShoot)
-    button.TouchStarted:Connect(instantShoot)
-
-    canShoot = true
-    lastShotTime = 0
-    setButtonState(true)
-end
-
-player.CharacterAdded:Connect(function()
-    task.wait(0.1)
-    createGUI()
-end)
-
-if player.Character then
-    createGUI()
+print("RemoteEvent found?", remoteEvent ~= nil)
+if remoteEvent then
+    print("RemoteEvent ClassName:", remoteEvent.ClassName)
+    print("IsA RemoteEvent?", remoteEvent:IsA("RemoteEvent"))
+    
+    -- Try firing
+    local success, err = pcall(function()
+        remoteEvent:FireServer("collect")
+    end)
+    print("FireServer result:", success, err or "no error")
+    
+    -- Also try with unpack style
+    local args = { [1] = "collect" }
+    local success2, err2 = pcall(function()
+        remoteEvent:FireServer(unpack(args))
+    end)
+    print("FireServer (unpack) result:", success2, err2 or "no error")
 else
-    player.CharacterAdded:Wait()
-    createGUI()
+    print("RemoteEvent not found! Possible names?")
+    if cincoFolder then
+        print("Available:", table.concat(debug ?))
+    end
 end
-
-print("Instant Aimbot loaded – shoots on press!")
