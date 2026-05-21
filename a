@@ -1,60 +1,488 @@
--- Simple Spam of the working remote
+-- FastDex - MVS - Hitbox + ESP + AutoCollect (toggle)
+-- Converted from Rayfield to InvokerLib
+-- Original by FrannnDev, UI adapted to InvokerLib
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Packages = ReplicatedStorage:FindFirstChild("Packages")
-if not Packages then warn("Packages not found") return end
-local Networking = Packages:FindFirstChild("Networking")
-if not Networking then warn("Networking not found") return end
-local CollectEvent = Networking:FindFirstChild("RE/Events/CollectEventSpawnable")
-if not CollectEvent then warn("CollectEvent not found") return end
+local LocalPlayer = Players.LocalPlayer
 
-_G.SpamActive = false
-_G.SpamDelay = 2  -- seconds between fires
+-- Load InvokerLib UI Library
+local InvokerLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/meepodota/invokerlib/refs/heads/main/mainlib.lua"))()
 
-local function fire()
-    if not _G.SpamActive then return end
-    local success, err = pcall(function()
-        CollectEvent:FireServer()
+-- Create Main Window
+local Window = InvokerLib:CreateWindow({
+    Title = "FastDex - Hitbox + ESP",
+    Size = UDim2.new(0, 650, 0, 500),
+    ToggleKey = Enum.KeyCode.RightControl
+})
+
+-- ================================
+-- Helper Functions (Team Detection)
+-- ================================
+local function getTeamFrames()
+    local ok, redFrame, blueFrame = pcall(function()
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return nil, nil end
+        local main = pg:FindFirstChild("Main")
+        if not main then return nil, nil end
+        local mgf = main:FindFirstChild("MainGameFrame")
+        if not mgf then return nil, nil end
+        local pf = mgf:FindFirstChild("PlayersFrame")
+        if not pf then return nil, nil end
+        return pf:FindFirstChild("TeamRedFrame"), pf:FindFirstChild("TeamBlueFrame")
     end)
-    if success then
-        print("[Spam] Fired")
+    if not ok or not redFrame or not blueFrame then
+        return nil, nil
+    end
+    return redFrame, blueFrame
+end
+
+local function readNames(frame)
+    local names = {}
+    for _, child in ipairs(frame:GetChildren()) do
+        if child:IsA("Frame") then
+            table.insert(names, child.Name)
+        end
+    end
+    return names
+end
+
+local function normalizeName(n)
+    return tostring(n):gsub("%s+", "")
+end
+
+local function getEnemies()
+    local redFrame, blueFrame = getTeamFrames()
+    if not redFrame or not blueFrame then
+        return {}
+    end
+
+    local redRaw = readNames(redFrame)
+    local blueRaw = readNames(blueFrame)
+
+    local youInRed, youInBlue = false, false
+    local redSet, blueSet = {}, {}
+
+    for _, n in ipairs(redRaw) do
+        local nn = normalizeName(n)
+        redSet[nn] = true
+        if nn == normalizeName(LocalPlayer.Name) then
+            youInRed = true
+        end
+    end
+
+    for _, n in ipairs(blueRaw) do
+        local nn = normalizeName(n)
+        blueSet[nn] = true
+        if nn == normalizeName(LocalPlayer.Name) then
+            youInBlue = true
+        end
+    end
+    if not (youInRed or youInBlue) then
+        return {}
+    end
+
+    local enemySet = youInRed and blueSet or redSet
+    local enemies = {}
+
+    for name,_ in pairs(enemySet) do
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if normalizeName(plr.Name) == name and plr ~= LocalPlayer then
+                table.insert(enemies, plr)
+            end
+        end
+    end
+    return enemies
+end
+
+-- ================================
+-- Hitbox Expander (with wall check)
+-- ================================
+_G.HeadSize = nil
+_G.Disabled = false
+_G.Transparency = nil
+_G.SelectedColor = nil
+_G.Originals = {}
+_G.AntiWall = false
+local visibilityCache = {}
+
+local function isVisible(part)
+    local cam = Workspace.CurrentCamera
+    if not cam then return true end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {LocalPlayer.Character}
+    local result = Workspace:Raycast(cam.CFrame.Position, (part.Position - cam.CFrame.Position), params)
+    if not result then return true end
+    return result.Instance:IsDescendantOf(part.Parent)
+end
+
+local function applyHitbox(v)
+    if v == LocalPlayer then return end
+    local char = v.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    if _G.AntiWall and visibilityCache[v.Name] == false then
+        local orig = _G.Originals[v.Name]
+        if orig then
+            hrp.Size = orig.Size
+            hrp.Transparency = orig.Transparency
+            hrp.BrickColor = orig.Color
+            hrp.Material = orig.Material
+            hrp.CanCollide = true
+        end
+        return
+    end
+
+    if _G.Disabled then
+        if not _G.Originals[v.Name] then
+            _G.Originals[v.Name] = {
+                Size = hrp.Size,
+                Transparency = hrp.Transparency,
+                Color = hrp.BrickColor,
+                Material = hrp.Material
+            }
+        end
+        if _G.HeadSize then hrp.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize) end
+        if _G.Transparency then hrp.Transparency = _G.Transparency end
+        if _G.SelectedColor then hrp.BrickColor = BrickColor.new(_G.SelectedColor) end
+        hrp.Material = Enum.Material.Neon
+        hrp.CanCollide = false
     else
-        warn("[Spam] Error: " .. tostring(err))
+        local orig = _G.Originals[v.Name]
+        if orig then
+            hrp.Size = orig.Size
+            hrp.Transparency = orig.Transparency
+            hrp.BrickColor = orig.Color
+            hrp.Material = orig.Material
+            hrp.CanCollide = true
+        end
     end
 end
 
--- Spam loop
+local function setupPlayer(v)
+    visibilityCache[v.Name] = false
+    v.CharacterAdded:Connect(function()
+        task.wait(0.15)
+        applyHitbox(v)
+    end)
+    if v.Character then applyHitbox(v) end
+end
+
+for _, v in pairs(Players:GetPlayers()) do setupPlayer(v) end
+Players.PlayerAdded:Connect(setupPlayer)
+
+-- Visibility update loop for AntiWall
 task.spawn(function()
     while true do
-        fire()
-        task.wait(_G.SpamDelay)
+        if _G.AntiWall then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    local c = plr.Character
+                    local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        visibilityCache[plr.Name] = isVisible(hrp)
+                    end
+                end
+            end
+        end
+        task.wait(0.15)
     end
 end)
 
--- On‑screen toggle button
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RemoteSpam"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = game:CoreGui
-
-local btn = Instance.new("TextButton")
-btn.Size = UDim2.new(0, 200, 0, 50)
-btn.Position = UDim2.new(0.5, -100, 0.85, 0)
-btn.Text = "Start Spam"
-btn.BackgroundColor3 = Color3.fromRGB(40,40,50)
-btn.TextColor3 = Color3.new(1,1,1)
-btn.Font = Enum.Font.GothamBold
-btn.TextSize = 16
-btn.Parent = screenGui
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 12)
-corner.Parent = btn
-
-btn.MouseButton1Click:Connect(function()
-    _G.SpamActive = not _G.SpamActive
-    btn.Text = _G.SpamActive and "Stop Spam" or "Start Spam"
-    btn.BackgroundColor3 = _G.SpamActive and Color3.fromRGB(0,180,0) or Color3.fromRGB(40,40,50)
-    print(_G.SpamActive and "Spam started" or "Spam stopped")
+-- Continuous hitbox application loop
+task.spawn(function()
+    while true do
+        for _, plr in ipairs(Players:GetPlayers()) do
+            applyHitbox(plr)
+        end
+        task.wait(0.16)
+    end
 end)
 
-print("Ready. Click the button to start spamming every " .. _G.SpamDelay .. " seconds.")
+-- Hitbox Tab UI (InvokerLib)
+local HitboxTab = Window:CreateTab({Name = "Hitbox", Icon = "🎯"})
+local HitboxSection = HitboxTab:CreateSection("Hitbox Expander")
+
+HitboxSection:CreateLabel("Hitbox Expander with Wall Check & Transparency")
+
+HitboxSection:CreateToggle({
+    Name = "Enable Hitbox",
+    Default = false,
+    Callback = function(val)
+        _G.Disabled = val
+        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
+    end
+})
+
+HitboxSection:CreateToggle({
+    Name = "Anti Wall Shot",
+    Default = false,
+    Callback = function(val)
+        _G.AntiWall = val
+    end
+})
+
+HitboxSection:CreateDropdown({
+    Name = "Choose Color",
+    Options = {"Gray", "Bright red", "Bright blue", "Bright yellow", "Bright green", "White", "Black"},
+    Default = "Gray",
+    Callback = function(opt)
+        _G.SelectedColor = opt
+        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
+    end
+})
+
+HitboxSection:CreateTextbox({
+    Name = "Head Size",
+    Placeholder = "1 - 50",
+    Callback = function(txt)
+        local n = tonumber(txt)
+        _G.HeadSize = n and math.clamp(n, 1, 50) or nil
+        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
+    end
+})
+
+HitboxSection:CreateTextbox({
+    Name = "Transparency",
+    Placeholder = "0 - 1",
+    Callback = function(txt)
+        local n = tonumber(txt)
+        _G.Transparency = n and math.clamp(n, 0, 1) or nil
+        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
+    end
+})
+
+-- ================================
+-- ESP (Enemy Highlighting)
+-- ================================
+local espEnabled = false
+local highlights = {}
+
+local function removeHighlight(player)
+    local h = highlights[player]
+    if h then
+        pcall(function() h:Destroy() end)
+        highlights[player] = nil
+    end
+end
+
+local function createHighlight(player, color)
+    local char = player.Character
+    if not char then return end
+    if not char:FindFirstChild("HumanoidRootPart") then return end
+
+    local h = highlights[player]
+    if not h or h.Parent == nil or h.Adornee ~= char then
+        if h then pcall(function() h:Destroy() end) end
+        h = Instance.new("Highlight")
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.FillTransparency = 0.5
+        h.OutlineColor = Color3.fromRGB(255, 255, 255)
+        h.Parent = char
+        highlights[player] = h
+    end
+    h.Adornee = char
+    h.FillColor = color
+end
+
+local function updateESP()
+    if not espEnabled then return end
+    local enemies = getEnemies()
+    if not enemies or #enemies == 0 then
+        for plr, _ in pairs(highlights) do removeHighlight(plr) end
+        return
+    end
+
+    -- Determine enemy team color
+    local redFrame, blueFrame = getTeamFrames()
+    if not redFrame or not blueFrame then return end
+    local youInRed = false
+    for _, n in ipairs(readNames(redFrame)) do
+        if normalizeName(n) == normalizeName(LocalPlayer.Name) then
+            youInRed = true
+            break
+        end
+    end
+    local enemyColor = youInRed and Color3.fromRGB(0, 0, 255) or Color3.fromRGB(255, 0, 0)
+
+    -- Remove highlights for non-enemies
+    local enemyTable = {}
+    for _, e in ipairs(enemies) do enemyTable[e] = true end
+    for plr, _ in pairs(highlights) do
+        if not enemyTable[plr] then removeHighlight(plr) end
+    end
+
+    -- Add/update highlights for enemies
+    for _, enemy in ipairs(enemies) do
+        createHighlight(enemy, enemyColor)
+    end
+end
+
+-- ESP Tab UI (InvokerLib)
+local ESPTab = Window:CreateTab({Name = "ESP", Icon = "👁️"})
+local ESPSection = ESPTab:CreateSection("Enemy Highlighting")
+
+ESPSection:CreateLabel("ESP - Highlights enemies through walls")
+
+ESPSection:CreateToggle({
+    Name = "Enable ESP",
+    Default = false,
+    Callback = function(v)
+        espEnabled = v
+        if not espEnabled then
+            for _, plr in pairs(Players:GetPlayers()) do
+                removeHighlight(plr)
+            end
+        else
+            updateESP()
+        end
+    end
+})
+
+-- Update ESP on every render step
+RunService.RenderStepped:Connect(function()
+    if espEnabled then
+        pcall(updateESP)
+    end
+end)
+
+-- Cleanup when players join/leave/respawn
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        if espEnabled then task.defer(updateESP) end
+    end)
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    removeHighlight(p)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if espEnabled then
+        task.wait(0.5)
+        updateESP()
+    end
+end)
+
+-- ================================
+-- Misc Tab (InvokerLib – no floating button needed)
+-- ================================
+local MiscTab = Window:CreateTab({Name = "Misc", Icon = "⚙️"})
+local MiscSection = MiscTab:CreateSection("UI Info")
+
+MiscSection:CreateLabel("Press RightControl to toggle the menu")
+MiscSection:CreateButton({
+    Name = "Show Toggle Key Reminder",
+    Callback = function()
+        Window:Notify({
+            Title = "Toggle Key",
+            Content = "Press RightControl to show/hide this window",
+            Type = "Info",
+            Duration = 3
+        })
+    end
+})
+
+-- ================================
+-- AutoCollect Feature (Toggleable)
+-- ================================
+local remote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Networking"):WaitForChild("RE/Events/CollectEventSpawnable")
+local ITEM_NAME = "Sombrero"
+local IsA = game.IsA
+
+local function collect(obj)
+    if not (IsA(obj, "BasePart") or IsA(obj, "Model")) then return end
+    if obj.Name == ITEM_NAME or obj:FindFirstChild(ITEM_NAME) then
+        remote:FireServer(obj)
+        if IsA(obj, "BasePart") then
+            obj.CFrame = CFrame.new(0, 10000, 0)
+        elseif IsA(obj, "Model") then
+            obj:MoveTo(Vector3.new(0, 10000, 0))
+        end
+    end
+end
+
+local collectorConnection = nil
+local collectorEnabled = false
+
+local function startCollector()
+    if collectorEnabled then return end
+    collectorEnabled = true
+
+    -- Initial scan
+    task.spawn(function()
+        local descendants = workspace:GetDescendants()
+        for i = 1, #descendants do
+            local v = descendants[i]
+            if v.Name == ITEM_NAME then
+                collect(v)
+            end
+            if i % 50 == 0 then task.wait() end
+        end
+    end)
+
+    -- Listen for new items
+    collectorConnection = workspace.DescendantAdded:Connect(function(newObject)
+        if newObject.Name ~= ITEM_NAME and not IsA(newObject, "Model") then
+            return
+        end
+        task.defer(collect, newObject)
+    end)
+end
+
+local function stopCollector()
+    if not collectorEnabled then return end
+    collectorEnabled = false
+    if collectorConnection then
+        collectorConnection:Disconnect()
+        collectorConnection = nil
+    end
+end
+
+-- AutoCollect Tab UI (InvokerLib)
+local AutoCollectTab = Window:CreateTab({Name = "AutoCollect", Icon = "🔄"})
+local AutoCollectSection = AutoCollectTab:CreateSection("Item Collector")
+
+AutoCollectSection:CreateLabel("Auto-collect '" .. ITEM_NAME .. "' items (low‑lag mode)")
+
+AutoCollectSection:CreateToggle({
+    Name = "Enable AutoCollect",
+    Default = false,
+    Callback = function(value)
+        if value then
+            startCollector()
+            Window:Notify({
+                Title = "AutoCollect",
+                Content = "Collector started!",
+                Type = "Success",
+                Duration = 2
+            })
+        else
+            stopCollector()
+            Window:Notify({
+                Title = "AutoCollect",
+                Content = "Collector stopped.",
+                Type = "Info",
+                Duration = 2
+            })
+        end
+    end
+})
+
+-- Initial success notification
+Window:Notify({
+    Title = "FastDex - MVS",
+    Content = "Loaded! Use RightControl to toggle UI.",
+    Type = "Success",
+    Duration = 4
+})
+
+print("FastDex - Hitbox, ESP, AutoCollect loaded with InvokerLib.")
