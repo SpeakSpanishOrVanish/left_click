@@ -1,6 +1,5 @@
--- FastDex - Standalone Inventory Viewer
--- Only shows other players' skins with 3D preview
--- By FrannnDev (DecentHolograms)
+-- FastDex - Inventory Viewer (Robust)
+-- Automatically finds SkinsFolder by searching common names & checking for Count objects
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,9 +9,57 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- ---------- Inventory Viewer Function (from original) ----------
+-- ---------- Helper: Find the player's skin container ----------
+local function findSkinsContainer(player)
+    -- List of possible folder names
+    local possibleNames = {"SkinsFolder", "Skins", "Inventory", "Items", "SkinInventory"}
+    for _, name in ipairs(possibleNames) do
+        local folder = player:FindFirstChild(name)
+        if folder and folder:IsA("Folder") then
+            -- Quick check: does it have any child with a "Count" IntValue?
+            for _, child in pairs(folder:GetChildren()) do
+                if child:FindFirstChild("Count") then
+                    return folder
+                end
+            end
+        end
+    end
+    -- If not found, scan all children of player for a folder containing items with Count
+    for _, child in pairs(player:GetChildren()) do
+        if child:IsA("Folder") then
+            for _, sub in pairs(child:GetChildren()) do
+                if sub:FindFirstChild("Count") then
+                    return child
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- ---------- Helper: Find matching skin model in ReplicatedStorage ----------
+local function findSkinModel(skinName)
+    local skinsRoot = ReplicatedStorage:FindFirstChild("Skins")
+    if not skinsRoot then return nil end
+    
+    local function search(folder)
+        for _, item in pairs(folder:GetChildren()) do
+            if item.Name == skinName or item.Name:lower() == skinName:lower() then
+                return item
+            end
+            if item:IsA("Folder") then
+                local found = search(item)
+                if found then return found end
+            end
+        end
+        return nil
+    end
+    
+    return search(skinsRoot)
+end
+
+-- ---------- Inventory Viewer GUI (same as before, but uses the finders) ----------
 local function openInventoryViewer(targetUsername)
-    -- Clean previous viewer if exists
     if playerGui:FindFirstChild("FastDexItemViewer") then
         playerGui:FindFirstChild("FastDexItemViewer"):Destroy()
     end
@@ -155,7 +202,7 @@ local function openInventoryViewer(targetUsername)
     errorLabel.Visible = false
     errorLabel.Parent = contentFrame
 
-    -- Fullscreen preview
+    -- Fullscreen preview (same as original)
     local fullscreenFrame = Instance.new("Frame")
     fullscreenFrame.Name = "FullscreenViewer"
     fullscreenFrame.Size = UDim2.new(1, 0, 1, 0)
@@ -354,16 +401,16 @@ local function openInventoryViewer(targetUsername)
         updateCamera()
     end
 
-    -- Load target player's inventory
+    -- Load target player's inventory using robust finder
     local targetPlayer = Players:FindFirstChild(targetUsername)
     if not targetPlayer then
-        errorLabel.Text = "User is not in game"
+        errorLabel.Text = "Player not in game"
         errorLabel.Visible = true
         scrollFrame.Visible = false
     else
-        local skinsFolder = targetPlayer:FindFirstChild("SkinsFolder")
+        local skinsFolder = findSkinsContainer(targetPlayer)
         if not skinsFolder then
-            errorLabel.Text = "SkinsFolder not found"
+            errorLabel.Text = "Could not locate skins folder for this player"
             errorLabel.Visible = true
             scrollFrame.Visible = false
         else
@@ -372,34 +419,14 @@ local function openInventoryViewer(targetUsername)
                 local skinName = skinItem.Name
                 local count = skinItem:FindFirstChild("Count")
                 local countValue = count and count.Value or 0
-
-                local knivesFolder = ReplicatedStorage.Skins:FindFirstChild("Knives")
-                local gunsFolder = ReplicatedStorage.Skins:FindFirstChild("Guns")
-                local foundItem = nil
-
-                if knivesFolder then
-                    for _, knife in pairs(knivesFolder:GetChildren()) do
-                        if knife.Name == skinName or knife.Name:find(skinName) or skinName:find(knife.Name) then
-                            foundItem = knife
-                            break
-                        end
-                    end
-                end
-                if not foundItem and gunsFolder then
-                    for _, gun in pairs(gunsFolder:GetChildren()) do
-                        if gun.Name == skinName or gun.Name:find(skinName) or skinName:find(gun.Name) then
-                            foundItem = gun
-                            break
-                        end
-                    end
-                end
+                local foundItem = findSkinModel(skinName)
                 if foundItem then
                     table.insert(items, {item = foundItem, count = countValue})
                 end
             end
 
             if #items == 0 then
-                errorLabel.Text = "No items found"
+                errorLabel.Text = "No items found (or no matching models in ReplicatedStorage)"
                 errorLabel.Visible = true
                 scrollFrame.Visible = false
             else
@@ -533,12 +560,12 @@ local function openInventoryViewer(targetUsername)
     openTween:Play()
 end
 
--- ---------- Simple UI to select a player and view inventory ----------
+-- ---------- UI to select player ----------
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local Window = Rayfield:CreateWindow({
-    Name = "FastDex - Inventory Viewer Only",
+    Name = "FastDex - Inventory Viewer",
     LoadingTitle = "Inventory Viewer",
-    LoadingSubtitle = "By FrannnDev",
+    LoadingSubtitle = "Robust version",
     ConfigurationSaving = { Enabled = true, FolderName = "FastDexInvViewer", FileName = "InvViewer" },
     KeySystem = false
 })
@@ -564,7 +591,6 @@ local dropdown = InventoryTab:CreateDropdown({
     end
 })
 
--- Refresh dropdown when players join/leave
 Players.PlayerAdded:Connect(function() dropdown:Set(getPlayerNames()) end)
 Players.PlayerRemoving:Connect(function() dropdown:Set(getPlayerNames()) end)
 
