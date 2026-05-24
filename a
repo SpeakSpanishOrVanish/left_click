@@ -1,617 +1,243 @@
--- FastDex - Inventory Viewer (Robust)
--- Automatically finds SkinsFolder by searching common names & checking for Count objects
+-- Instant-Shot Aimbot for Duels: Murderers vs Sheriffs
+-- Added: Press X key to shoot (works alongside button)
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
-local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- ---------- Helper: Find the player's skin container ----------
-local function findSkinsContainer(player)
-    -- List of possible folder names
-    local possibleNames = {"SkinsFolder", "Skins", "Inventory", "Items", "SkinInventory"}
-    for _, name in ipairs(possibleNames) do
-        local folder = player:FindFirstChild(name)
-        if folder and folder:IsA("Folder") then
-            -- Quick check: does it have any child with a "Count" IntValue?
-            for _, child in pairs(folder:GetChildren()) do
-                if child:FindFirstChild("Count") then
-                    return folder
-                end
-            end
+local player = Players.LocalPlayer
+
+-- ===== Settings =====
+local cooldownTime = 2.5
+local lastShotTime = 0
+local canShoot = true
+
+-- Colors
+local readyColor = Color3.fromRGB(0, 255, 0)
+local cooldownColor = Color3.fromRGB(255, 0, 0)
+
+-- ===== GUI =====
+local screenGui = nil
+local button = nil
+local stroke = nil
+
+-- Cache
+local localBeam = ReplicatedStorage:FindFirstChild("BindableEvents"):FindFirstChild("LocalBeam")
+local killedRemote = ReplicatedStorage:FindFirstChild("Remotes"):FindFirstChild("Killed")
+
+local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- ===== Team Check =====
+local function isValidTarget(otherPlayer)
+    if not otherPlayer or otherPlayer == player then return false end
+    if not otherPlayer.Character then return false end
+    local hum = otherPlayer.Character:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+
+    local myGame = player:GetAttribute("Game")
+    local theirGame = otherPlayer:GetAttribute("Game")
+    if myGame and theirGame and myGame ~= theirGame then return false end
+
+    local myTeam = player:GetAttribute("Team")
+    local theirTeam = otherPlayer:GetAttribute("Team")
+    if myTeam and theirTeam and myTeam == theirTeam then return false end
+
+    return true
+end
+
+-- ===== Weapon & Combat =====
+local function getWeapon()
+    local char = player.Character
+    if not char then return nil end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool:FindFirstChild("fire") then
+            return tool
         end
     end
-    -- If not found, scan all children of player for a folder containing items with Count
-    for _, child in pairs(player:GetChildren()) do
-        if child:IsA("Folder") then
-            for _, sub in pairs(child:GetChildren()) do
-                if sub:FindFirstChild("Count") then
-                    return child
-                end
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, tool in pairs(bp:GetChildren()) do
+            if tool:IsA("Tool") and tool:FindFirstChild("fire") then
+                tool.Parent = char
+                return tool
             end
         end
     end
     return nil
 end
 
--- ---------- Helper: Find matching skin model in ReplicatedStorage ----------
-local function findSkinModel(skinName)
-    local skinsRoot = ReplicatedStorage:FindFirstChild("Skins")
-    if not skinsRoot then return nil end
-    
-    local function search(folder)
-        for _, item in pairs(folder:GetChildren()) do
-            if item.Name == skinName or item.Name:lower() == skinName:lower() then
-                return item
-            end
-            if item:IsA("Folder") then
-                local found = search(item)
-                if found then return found end
-            end
-        end
-        return nil
-    end
-    
-    return search(skinsRoot)
+local function hasClearLineOfSight(targetPlayer)
+    local char = player.Character
+    local tChar = targetPlayer.Character
+    if not char or not tChar then return false end
+    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    local tRoot = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso")
+    if not myRoot or not tRoot then return false end
+    local dir = (tRoot.Position - myRoot.Position).Unit
+    local dist = (tRoot.Position - myRoot.Position).Magnitude
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {char, tChar}
+    params.IgnoreWater = true
+    return workspace:Raycast(myRoot.Position, dir * dist, params) == nil
 end
 
--- ---------- Inventory Viewer GUI (same as before, but uses the finders) ----------
-local function openInventoryViewer(targetUsername)
-    if playerGui:FindFirstChild("FastDexItemViewer") then
-        playerGui:FindFirstChild("FastDexItemViewer"):Destroy()
-    end
+local function getNearestVisibleEnemy()
+    local char = player.Character
+    if not char then return nil end
+    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    if not myRoot then return nil end
 
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "FastDexItemViewer"
+    local nearest, minDist = nil, math.huge
+    for _, other in pairs(Players:GetPlayers()) do
+        if isValidTarget(other) then
+            local oRoot = other.Character:FindFirstChild("HumanoidRootPart") or other.Character:FindFirstChild("Torso")
+            if oRoot then
+                local dist = (myRoot.Position - oRoot.Position).Magnitude
+                if dist < minDist and hasClearLineOfSight(other) then
+                    minDist = dist
+                    nearest = other
+                end
+            end
+        end
+    end
+    return nearest
+end
+
+-- Shoot instantly
+local function shootEnemy(targetPlayer)
+    local char = player.Character
+    if not char then return false end
+    local weapon = getWeapon()
+    if not weapon then return false end
+    local handle = weapon:FindFirstChild("Handle")
+    if not handle then return false end
+    local tRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Torso")
+    if not tRoot then return false end
+
+    local startPos = handle.Position
+    local hitPos = tRoot.Position
+
+    if localBeam then pcall(function() localBeam:Fire(handle, hitPos) end) end
+    local fireRemote = weapon:FindFirstChild("fire")
+    if fireRemote then pcall(function() fireRemote:FireServer() end) end
+    local beamRemote = weapon:FindFirstChild("showBeam")
+    if beamRemote then pcall(function() beamRemote:FireServer(hitPos, startPos, handle) end) end
+    local killRemote = weapon:FindFirstChild("kill")
+    if killRemote then
+        local dir = (hitPos - startPos).Unit
+        pcall(function() killRemote:FireServer(targetPlayer, dir) end)
+    end
+    if killedRemote then pcall(function() killedRemote:FireServer(targetPlayer) end) end
+
+    return true
+end
+
+-- ===== Shared shoot function (used by both button and keybind) =====
+local function instantShoot()
+    if not canShoot then return end
+    if not player.Character or not player.Character:FindFirstChild("Humanoid") then return end
+    if not getWeapon() then return end
+
+    local target = getNearestVisibleEnemy()
+    if target and shootEnemy(target) then
+        canShoot = false
+        lastShotTime = tick()
+        if button then
+            local colorTween = TweenService:Create(button, tweenInfo, {BackgroundColor3 = cooldownColor})
+            colorTween:Play()
+        end
+        task.spawn(function()
+            task.wait(cooldownTime)
+            canShoot = true
+            if button then
+                local colorTween = TweenService:Create(button, tweenInfo, {BackgroundColor3 = readyColor})
+                colorTween:Play()
+            end
+        end)
+    end
+end
+
+-- ===== Create GUI =====
+local function createGUI()
+    if screenGui then screenGui:Destroy() end
+
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AimbotButtonGui"
     screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.IgnoreGuiInset = true
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = playerGui
 
-    local blur = Instance.new("BlurEffect")
-    blur.Size = 0
-    blur.Parent = game.Lighting
+    local shadow = Instance.new("Frame")
+    shadow.Size = UDim2.new(0, 76, 0, 76)
+    shadow.AnchorPoint = Vector2.new(1, 1)
+    shadow.Position = UDim2.new(1, -20, 1, -180)
+    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.BackgroundTransparency = 0.85
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = 9
+    shadow.Parent = screenGui
+    Instance.new("UICorner", shadow).CornerRadius = UDim.new(0, 16)
 
-    local function isMobile()
-        return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-    end
+    button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, 70, 0, 70)
+    button.AnchorPoint = Vector2.new(1, 1)
+    button.Position = UDim2.new(1, -23, 1, -183)
+    button.BackgroundColor3 = readyColor
+    button.BackgroundTransparency = 0.85
+    button.BorderSizePixel = 0
+    button.Text = ""
+    button.AutoButtonColor = false
+    button.ZIndex = 10
+    button.Parent = screenGui
 
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    mainFrame.Size = isMobile() and UDim2.new(0.88, 0, 0, 320) or UDim2.new(0, 550, 0, 320)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.ClipsDescendants = true
-    mainFrame.Parent = screenGui
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 14)
 
-    local mainCorner = Instance.new("UICorner")
-    mainCorner.CornerRadius = UDim.new(0, 15)
-    mainCorner.Parent = mainFrame
+    stroke = Instance.new("UIStroke", button)
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Transparency = 0.0
+    stroke.Thickness = 3.0
+    stroke.LineJoinMode = Enum.LineJoinMode.Round
 
-    local mainStroke = Instance.new("UIStroke")
-    mainStroke.Color = Color3.fromRGB(100, 100, 120)
-    mainStroke.Thickness = 1
-    mainStroke.Transparency = 0.7
-    mainStroke.Parent = mainFrame
-
-    local headerGradient = Instance.new("Frame")
-    headerGradient.Name = "Header"
-    headerGradient.Size = UDim2.new(1, 0, 0, 28)
-    headerGradient.BackgroundColor3 = Color3.fromRGB(255, 107, 53)
-    headerGradient.BorderSizePixel = 0
-    headerGradient.Parent = mainFrame
-
-    local headerCorner = Instance.new("UICorner")
-    headerCorner.CornerRadius = UDim.new(0, 15)
-    headerCorner.Parent = headerGradient
-
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -50, 1, 0)
-    titleLabel.Position = UDim2.new(0, 15, 0, 0)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "FastDex Inventory Viewer"
-    titleLabel.TextColor3 = Color3.new(1, 1, 1)
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.TextSize = isMobile() and 12 or 14
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Parent = headerGradient
-
-    local closeButton = Instance.new("TextButton")
-    closeButton.Size = UDim2.new(0, 22, 0, 22)
-    closeButton.Position = UDim2.new(1, -30, 0.5, -11)
-    closeButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
-    closeButton.Text = "X"
-    closeButton.TextColor3 = Color3.new(1, 1, 1)
-    closeButton.Font = Enum.Font.GothamBold
-    closeButton.TextSize = 14
-    closeButton.BorderSizePixel = 0
-    closeButton.Parent = headerGradient
-
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 6)
-    closeCorner.Parent = closeButton
-
-    -- Dragging logic
-    local isDraggingWindow = false
-    local dragStart = nil
-    local startPos = nil
-
-    headerGradient.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            isDraggingWindow = true
-            dragStart = input.Position
-            startPos = mainFrame.Position
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if isDraggingWindow and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - dragStart
-            mainFrame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            isDraggingWindow = false
-        end
-    end)
-
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Size = UDim2.new(1, 0, 1, -45)
-    contentFrame.Position = UDim2.new(0, 0, 0, 45)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.BorderSizePixel = 0
-    contentFrame.Parent = mainFrame
-
-    local scrollFrame = Instance.new("ScrollingFrame")
-    scrollFrame.Size = UDim2.new(1, -20, 1, -20)
-    scrollFrame.Position = UDim2.new(0, 10, 0, 10)
-    scrollFrame.BackgroundTransparency = 1
-    scrollFrame.BorderSizePixel = 0
-    scrollFrame.ScrollBarThickness = 4
-    scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(255, 107, 53)
-    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    scrollFrame.Parent = contentFrame
-
-    local gridLayout = Instance.new("UIGridLayout")
-    gridLayout.CellSize = isMobile() and UDim2.new(0.48, 0, 0, 170) or UDim2.new(0, 240, 0, 170)
-    gridLayout.CellPadding = UDim2.new(0, 10, 0, 10)
-    gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    gridLayout.Parent = scrollFrame
-
-    local errorLabel = Instance.new("TextLabel")
-    errorLabel.Size = UDim2.new(1, 0, 1, 0)
-    errorLabel.BackgroundTransparency = 1
-    errorLabel.Text = ""
-    errorLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-    errorLabel.Font = Enum.Font.GothamBold
-    errorLabel.TextSize = 18
-    errorLabel.Visible = false
-    errorLabel.Parent = contentFrame
-
-    -- Fullscreen preview (same as original)
-    local fullscreenFrame = Instance.new("Frame")
-    fullscreenFrame.Name = "FullscreenViewer"
-    fullscreenFrame.Size = UDim2.new(1, 0, 1, 0)
-    fullscreenFrame.BackgroundTransparency = 1
-    fullscreenFrame.Visible = false
-    fullscreenFrame.ZIndex = 100
-    fullscreenFrame.Parent = screenGui
-
-    local fullViewFrame = Instance.new("Frame")
-    fullViewFrame.Name = "ViewFrame"
-    fullViewFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    fullViewFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    fullViewFrame.Size = isMobile() and UDim2.new(0.88, 0, 0, 300) or UDim2.new(0, 380, 0, 310)
-    fullViewFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
-    fullViewFrame.BorderSizePixel = 0
-    fullViewFrame.ZIndex = 101
-    fullViewFrame.Parent = fullscreenFrame
-
-    local fullCorner = Instance.new("UICorner")
-    fullCorner.CornerRadius = UDim.new(0, 20)
-    fullCorner.Parent = fullViewFrame
-
-    local fullStroke = Instance.new("UIStroke")
-    fullStroke.Color = Color3.fromRGB(255, 107, 53)
-    fullStroke.Thickness = 2
-    fullStroke.Parent = fullViewFrame
-
-    local isDraggingViewer = false
-    local viewerDragStart = nil
-    local viewerStartPos = nil
-
-    local fullHeader = Instance.new("Frame")
-    fullHeader.Size = UDim2.new(1, 0, 0, 32)
-    fullHeader.BackgroundColor3 = Color3.fromRGB(255, 107, 53)
-    fullHeader.BorderSizePixel = 0
-    fullHeader.ZIndex = 101
-    fullHeader.Parent = fullViewFrame
-
-    fullHeader.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            isDraggingViewer = true
-            viewerDragStart = input.Position
-            viewerStartPos = fullViewFrame.Position
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if isDraggingViewer and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - viewerDragStart
-            fullViewFrame.Position = UDim2.new(
-                viewerStartPos.X.Scale,
-                viewerStartPos.X.Offset + delta.X,
-                viewerStartPos.Y.Scale,
-                viewerStartPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            isDraggingViewer = false
-        end
-    end)
-
-    local fullHeaderCorner = Instance.new("UICorner")
-    fullHeaderCorner.CornerRadius = UDim.new(0, 20)
-    fullHeaderCorner.Parent = fullHeader
-
-    local fullTitleLabel = Instance.new("TextLabel")
-    fullTitleLabel.Size = UDim2.new(1, -50, 1, 0)
-    fullTitleLabel.Position = UDim2.new(0, 10, 0, 0)
-    fullTitleLabel.BackgroundTransparency = 1
-    fullTitleLabel.Text = "Item Preview"
-    fullTitleLabel.TextColor3 = Color3.new(1, 1, 1)
-    fullTitleLabel.Font = Enum.Font.GothamBold
-    fullTitleLabel.TextSize = isMobile() and 12 or 14
-    fullTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    fullTitleLabel.ZIndex = 101
-    fullTitleLabel.Parent = fullHeader
-
-    local fullCloseButton = Instance.new("TextButton")
-    fullCloseButton.Size = UDim2.new(0, 24, 0, 24)
-    fullCloseButton.Position = UDim2.new(1, -30, 0.5, -12)
-    fullCloseButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
-    fullCloseButton.Text = "X"
-    fullCloseButton.TextColor3 = Color3.new(1, 1, 1)
-    fullCloseButton.Font = Enum.Font.GothamBold
-    fullCloseButton.TextSize = 14
-    fullCloseButton.BorderSizePixel = 0
-    fullCloseButton.ZIndex = 102
-    fullCloseButton.Parent = fullHeader
-
-    local fullCloseCorner = Instance.new("UICorner")
-    fullCloseCorner.CornerRadius = UDim.new(0, 8)
-    fullCloseCorner.Parent = fullCloseButton
-
-    local fullViewportFrame = Instance.new("ViewportFrame")
-    fullViewportFrame.Size = UDim2.new(1, -14, 1, -46)
-    fullViewportFrame.Position = UDim2.new(0, 7, 0, 38)
-    fullViewportFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
-    fullViewportFrame.BorderSizePixel = 0
-    fullViewportFrame.ZIndex = 101
-    fullViewportFrame.Parent = fullViewFrame
-
-    local fullViewportCorner = Instance.new("UICorner")
-    fullViewportCorner.CornerRadius = UDim.new(0, 15)
-    fullViewportCorner.Parent = fullViewportFrame
-
-    local fullCamera = Instance.new("Camera")
-    fullCamera.Parent = fullViewportFrame
-    fullViewportFrame.CurrentCamera = fullCamera
-
-    local function openFullscreen(item, itemName, count)
-        fullTitleLabel.Text = itemName .. " x" .. count
-
-        for _, child in pairs(fullViewportFrame:GetChildren()) do
-            if child:IsA("Model") then child:Destroy() end
-        end
-
-        local model
-        if item:IsA("Model") then
-            model = item:Clone()
-            model.Parent = fullViewportFrame
-        elseif item:IsA("BasePart") then
-            model = Instance.new("Model")
-            local clone = item:Clone()
-            clone.Parent = model
-            model.PrimaryPart = clone
-            model.Parent = fullViewportFrame
-        end
-
-        if not model then return end
-
-        local cf, size = model:GetBoundingBox()
-        local maxDim = math.max(size.X, size.Y, size.Z)
-        local distance = maxDim * 2.5
-        local rotationX, rotationY = -15, 0
-        local dragging = false
-        local hovering = false
-        local lastPos = Vector2.zero
-
-        local function updateCamera()
-            local center = cf.Position
-            local offset = CFrame.new(0, 0, distance)
-            local rotation = CFrame.Angles(0, math.rad(rotationY), 0) * CFrame.Angles(math.rad(rotationX), 0, 0)
-            local camCF = CFrame.new(center) * rotation * offset
-            fullCamera.CFrame = CFrame.lookAt(camCF.Position, center)
-        end
-
-        local connections = {}
-        table.insert(connections, fullViewportFrame.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                lastPos = input.Position
-            end
-        end))
-        table.insert(connections, fullViewportFrame.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
-            end
-        end))
-        table.insert(connections, fullViewportFrame.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                local delta = input.Position - lastPos
-                lastPos = input.Position
-                rotationY = rotationY - delta.X * 0.5
-                rotationX = math.clamp(rotationX - delta.Y * 0.5, -80, 80)
-            end
-            if input.UserInputType == Enum.UserInputType.MouseWheel and hovering then
-                distance = math.clamp(distance - (input.Position.Z * 2), maxDim * 0.5, maxDim * 10)
-            end
-        end))
-        table.insert(connections, fullViewportFrame.MouseEnter:Connect(function() hovering = true end))
-        table.insert(connections, fullViewportFrame.MouseLeave:Connect(function() hovering = false end))
-
-        local renderConn
-        renderConn = RunService.RenderStepped:Connect(function()
-            if model and fullCamera and fullscreenFrame.Visible then
-                if not dragging then rotationY = rotationY + 0.008 * 60 end
-                updateCamera()
-            end
-        end)
-        table.insert(connections, renderConn)
-
-        local function closeFullscreen()
-            for _, conn in pairs(connections) do conn:Disconnect() end
-            TweenService:Create(blur, TweenInfo.new(0.2), {Size = 0}):Play()
-            mainFrame.Visible = true
-            fullscreenFrame.Visible = false
-        end
-
-        fullCloseButton.MouseButton1Click:Connect(closeFullscreen)
-        TweenService:Create(blur, TweenInfo.new(0.2), {Size = 20}):Play()
-        mainFrame.Visible = false
-        fullscreenFrame.Visible = true
-        updateCamera()
-    end
-
-    -- Load target player's inventory using robust finder
-    local targetPlayer = Players:FindFirstChild(targetUsername)
-    if not targetPlayer then
-        errorLabel.Text = "Player not in game"
-        errorLabel.Visible = true
-        scrollFrame.Visible = false
-    else
-        local skinsFolder = findSkinsContainer(targetPlayer)
-        if not skinsFolder then
-            errorLabel.Text = "Could not locate skins folder for this player"
-            errorLabel.Visible = true
-            scrollFrame.Visible = false
-        else
-            local items = {}
-            for _, skinItem in pairs(skinsFolder:GetChildren()) do
-                local skinName = skinItem.Name
-                local count = skinItem:FindFirstChild("Count")
-                local countValue = count and count.Value or 0
-                local foundItem = findSkinModel(skinName)
-                if foundItem then
-                    table.insert(items, {item = foundItem, count = countValue})
-                end
-            end
-
-            if #items == 0 then
-                errorLabel.Text = "No items found (or no matching models in ReplicatedStorage)"
-                errorLabel.Visible = true
-                scrollFrame.Visible = false
-            else
-                local function createItemViewer(itemData, index)
-                    local item = itemData.item
-                    local count = itemData.count
-
-                    local itemFrame = Instance.new("Frame")
-                    itemFrame.Name = "ItemFrame_" .. index
-                    itemFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
-                    itemFrame.BorderSizePixel = 0
-                    itemFrame.LayoutOrder = index
-                    itemFrame.Parent = scrollFrame
-
-                    local itemCorner = Instance.new("UICorner")
-                    itemCorner.CornerRadius = UDim.new(0, 12)
-                    itemCorner.Parent = itemFrame
-
-                    local clickButton = Instance.new("TextButton")
-                    clickButton.Size = UDim2.new(1, 0, 1, 0)
-                    clickButton.BackgroundTransparency = 1
-                    clickButton.Text = ""
-                    clickButton.Parent = itemFrame
-
-                    local nameLabel = Instance.new("TextLabel")
-                    nameLabel.Size = UDim2.new(1, -10, 0, 25)
-                    nameLabel.Position = UDim2.new(0, 5, 0, 3)
-                    nameLabel.BackgroundTransparency = 1
-                    nameLabel.Text = item.Name .. " x" .. count
-                    nameLabel.TextColor3 = Color3.fromRGB(255, 230, 200)
-                    nameLabel.Font = Enum.Font.GothamBold
-                    nameLabel.TextScaled = true
-                    nameLabel.TextXAlignment = Enum.TextXAlignment.Center
-                    nameLabel.ZIndex = 2
-                    nameLabel.Parent = itemFrame
-
-                    local viewportContainer = Instance.new("Frame")
-                    viewportContainer.Size = UDim2.new(1, -10, 1, -30)
-                    viewportContainer.Position = UDim2.new(0, 5, 0, 30)
-                    viewportContainer.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
-                    viewportContainer.BorderSizePixel = 0
-                    viewportContainer.Parent = itemFrame
-
-                    local viewportCorner = Instance.new("UICorner")
-                    viewportCorner.CornerRadius = UDim.new(0, 10)
-                    viewportCorner.Parent = viewportContainer
-
-                    local viewportFrame = Instance.new("ViewportFrame")
-                    viewportFrame.Size = UDim2.new(1, -4, 1, -4)
-                    viewportFrame.Position = UDim2.new(0, 2, 0, 2)
-                    viewportFrame.BackgroundTransparency = 1
-                    viewportFrame.BorderSizePixel = 0
-                    viewportFrame.Parent = viewportContainer
-
-                    local camera = Instance.new("Camera")
-                    camera.Parent = viewportFrame
-                    viewportFrame.CurrentCamera = camera
-
-                    local model
-                    if item:IsA("Model") then
-                        model = item:Clone()
-                        model.Parent = viewportFrame
-                    elseif item:IsA("BasePart") then
-                        model = Instance.new("Model")
-                        local clone = item:Clone()
-                        clone.Parent = model
-                        model.PrimaryPart = clone
-                        model.Parent = viewportFrame
-                    end
-
-                    if not model then
-                        model = Instance.new("Model")
-                        local part = Instance.new("Part")
-                        part.Size = Vector3.new(0.5, 2, 0.2)
-                        part.Color = Color3.fromRGB(255, 107, 53)
-                        part.Material = Enum.Material.Neon
-                        part.Parent = model
-                        model.PrimaryPart = part
-                        model.Parent = viewportFrame
-                    end
-
-                    local cf, size = model:GetBoundingBox()
-                    local maxDim = math.max(size.X, size.Y, size.Z)
-                    local distance = maxDim * 2.5
-                    local rotationY = 0
-
-                    local function updateCamera()
-                        local center = cf.Position
-                        local offset = CFrame.new(0, 0, distance)
-                        local rotation = CFrame.Angles(0, math.rad(rotationY), 0) * CFrame.Angles(math.rad(-15), 0, 0)
-                        local camCF = CFrame.new(center) * rotation * offset
-                        camera.CFrame = CFrame.lookAt(camCF.Position, center)
-                    end
-
-                    RunService.RenderStepped:Connect(function()
-                        if model and camera then
-                            rotationY = rotationY + 0.5
-                            updateCamera()
-                        end
-                    end)
-
-                    clickButton.MouseButton1Click:Connect(function()
-                        openFullscreen(item, item.Name, count)
-                    end)
-
-                    updateCamera()
-                end
-
-                for i, itemData in ipairs(items) do
-                    createItemViewer(itemData, i)
-                end
-            end
-        end
-    end
-
-    closeButton.MouseButton1Click:Connect(function()
-        local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        local tween = TweenService:Create(mainFrame, tweenInfo, {Size = UDim2.new(0, 0, 0, 0)})
-        TweenService:Create(blur, tweenInfo, {Size = 0}):Play()
-        tween:Play()
-        tween.Completed:Connect(function()
-            screenGui:Destroy()
-            if blur then blur:Destroy() end
-        end)
-    end)
-
-    mainFrame.Size = UDim2.new(0, 0, 0, 0)
-    local openTween = TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = isMobile() and UDim2.new(0.95, 0, 0, 500) or UDim2.new(0, 850, 0, 500)
-    })
-    openTween:Play()
+    button.MouseButton1Down:Connect(instantShoot)
 end
 
--- ---------- UI to select player ----------
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-local Window = Rayfield:CreateWindow({
-    Name = "FastDex - Inventory Viewer",
-    LoadingTitle = "Inventory Viewer",
-    LoadingSubtitle = "Robust version",
-    ConfigurationSaving = { Enabled = true, FolderName = "FastDexInvViewer", FileName = "InvViewer" },
-    KeySystem = false
-})
-
-local InventoryTab = Window:CreateTab("View Inventory", 15403400185)
-InventoryTab:CreateLabel("Select a player and click View Inventory")
-
-local selectedPlayer = nil
-local function getPlayerNames()
-    local list = {}
-    for _, p in pairs(Players:GetPlayers()) do
-        table.insert(list, p.Name)
-    end
-    return list
+-- ===== Keybind Setup =====
+local keybindConnected = false
+local function setupKeybind()
+    if keybindConnected then return end
+    keybindConnected = true
+    
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        -- Check if X key is pressed, and not typing in a text box
+        if input.KeyCode == Enum.KeyCode.X and not gameProcessed then
+            -- Prevent shooting if a TextBox is focused (user typing)
+            if UserInputService:GetFocusedTextBox() then
+                return
+            end
+            instantShoot()
+        end
+    end)
 end
 
-local dropdown = InventoryTab:CreateDropdown({
-    Name = "Select Player",
-    Options = getPlayerNames(),
-    CurrentOption = {},
-    Callback = function(opt)
-        selectedPlayer = Players:FindFirstChild(opt[1])
-    end
-})
+-- ===== Initialize =====
+player.CharacterAdded:Connect(function()
+    task.wait(0.1)
+    createGUI()
+end)
 
-Players.PlayerAdded:Connect(function() dropdown:Set(getPlayerNames()) end)
-Players.PlayerRemoving:Connect(function() dropdown:Set(getPlayerNames()) end)
+if player.Character then
+    createGUI()
+else
+    player.CharacterAdded:Wait()
+    createGUI()
+end
 
-InventoryTab:CreateButton({
-    Name = "View Inventory",
-    Callback = function()
-        if selectedPlayer then
-            openInventoryViewer(selectedPlayer.Name)
-            Rayfield:Notify({
-                Title = "Inventory Viewer",
-                Content = "Opening inventory for " .. selectedPlayer.Name,
-                Duration = 3,
-                Image = 15403175166
-            })
-        else
-            Rayfield:Notify({
-                Title = "Error",
-                Content = "Select a player first!",
-                Duration = 3,
-                Image = 15403175166
-            })
-        end
-    end
-})
+setupKeybind()
+
+print("Instant Aimbot loaded – Press X to shoot, or click/tap the button")
