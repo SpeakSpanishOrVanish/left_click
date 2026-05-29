@@ -1,5 +1,5 @@
 -- FastDex - MVS - Hitbox + ESP (Team-based) + Hide Button + AutoCollect
--- Using Fluent UI Library (dawid-scripts)
+-- GUI converted from Rayfield to WindUI
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -10,18 +10,33 @@ local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
--- Load Fluent UI
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-local Window = Fluent:CreateWindow({
-    Title = "FastDex - MVS",
-    SubTitle = "Hitbox & ESP & AutoCollect",
-    Size = UDim2.new(0, 500, 0, 400),
-    Acrylic = true,
-    Theme = "Dark"
+-- Load WindUI
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- Create Window
+local Window = WindUI:CreateWindow({
+    Title = "FastDex - Hitbox + ESP",
+    Folder = "FastDexConfig",
+    Icon = "solar:folder-2-bold-duotone",
+    NewElements = true,
+    HideSearchBar = false,
+    OpenButton = {
+        Title = "Open FastDex UI",
+        Enabled = true,
+        Draggable = true,
+        OnlyMobile = false,
+        Scale = 0.5,
+    },
 })
 
+-- Create Tabs
+local HitboxTab = Window:Tab({ Title = "Hitbox", Icon = "solar:target-bold", IconShape = "Square", Border = true })
+local ESPTab = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold", IconShape = "Square", Border = true })
+local MiscTab = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold", IconShape = "Square", Border = true })
+local AutoCollectTab = Window:Tab({ Title = "AutoCollect", Icon = "solar:archive-bold", IconShape = "Square", Border = true })
+
 -- ================================
--- Helper Functions (Team Detection – unchanged)
+-- Helper Functions (Team Detection for Hitbox – unchanged)
 -- ================================
 local function getTeamFrames()
     local ok, redFrame, blueFrame = pcall(function()
@@ -100,7 +115,7 @@ local function getEnemies()
 end
 
 -- ================================
--- Hitbox Expander (unchanged logic)
+-- Hitbox Expander (with wall check) – unchanged
 -- ================================
 _G.HeadSize = nil
 _G.Disabled = false
@@ -178,6 +193,7 @@ end
 for _, v in pairs(Players:GetPlayers()) do setupPlayer(v) end
 Players.PlayerAdded:Connect(setupPlayer)
 
+-- Visibility update loop for AntiWall
 task.spawn(function()
     while true do
         if _G.AntiWall then
@@ -195,6 +211,7 @@ task.spawn(function()
     end
 end)
 
+-- Continuous hitbox application loop
 task.spawn(function()
     while true do
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -204,81 +221,86 @@ task.spawn(function()
     end
 end)
 
--- ================================
--- Fluent UI Tabs
--- ================================
-local HitboxTab = Window:AddTab({ Title = "Hitbox", Icon = "target" })
-local ESPTab = Window:AddTab({ Title = "ESP", Icon = "eye" })
-local MiscTab = Window:AddTab({ Title = "Misc", Icon = "settings" })
-local AutoCollectTab = Window:AddTab({ Title = "AutoCollect", Icon = "package" })
+-- Hitbox Tab UI (WindUI)
+HitboxTab:Section({ Title = "Hitbox Expander with Wall Check & Transparency", TextSize = 14 })
 
--- ================================
--- Hitbox Tab UI (Fluent)
--- ================================
-HitboxTab:AddLabel("Hitbox Expander with Wall Check & Transparency")
-
-HitboxTab:AddToggle("Enable Hitbox", {
-    Default = false,
+HitboxTab:Toggle({
+    Title = "Enable Hitbox",
+    Value = false,
     Callback = function(val)
         _G.Disabled = val
         for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
+    end,
 })
 
-HitboxTab:AddToggle("Anti Wall Shot", {
-    Default = false,
+HitboxTab:Toggle({
+    Title = "Anti Wall Shot",
+    Value = false,
     Callback = function(val)
         _G.AntiWall = val
-    end
+    end,
 })
 
-HitboxTab:AddDropdown("Choose Color", {
+HitboxTab:Space()
+
+HitboxTab:Dropdown({
+    Title = "Choose Color",
     Values = {"Gray", "Bright red", "Bright blue", "Bright yellow", "Bright green", "White", "Black"},
-    Default = 1,
-    Multi = false,
+    Value = nil,
+    AllowNone = false,
     Callback = function(opt)
         _G.SelectedColor = opt
         for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
+    end,
 })
 
-HitboxTab:AddInput("Head Size", {
+HitboxTab:Space()
+
+HitboxTab:Input({
+    Title = "Head Size",
     Placeholder = "1 - 50",
-    Numeric = true,
-    Finished = false,
+    Type = "Input",
     Callback = function(txt)
         local n = tonumber(txt)
         _G.HeadSize = n and math.clamp(n, 1, 50) or nil
         for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
+    end,
 })
 
-HitboxTab:AddInput("Transparency", {
+HitboxTab:Input({
+    Title = "Transparency",
     Placeholder = "0 - 1",
-    Numeric = true,
-    Finished = false,
+    Type = "Input",
     Callback = function(txt)
         local n = tonumber(txt)
         _G.Transparency = n and math.clamp(n, 0, 1) or nil
         for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
+    end,
 })
 
 -- ================================
--- ESP (Team-based Highlight) – unchanged logic
+-- NEW ESP (based on Team property) – unchanged
 -- ================================
 local espEnabled = false
-local Enemy_Color = Color3.fromRGB(255, 0, 0)
+local Enemy_Color = Color3.fromRGB(255, 0, 0) -- Red
 local TeamCheck = true
 
 local function ToggleESP(player, character)
     if not character then return end
+    
+    -- Remove existing highlight first
     local existing = character:FindFirstChild("Delta_ESP")
     if existing then existing:Destroy() end
+
+    -- If ESP is disabled globally, don't add anything
     if not espEnabled then return end
+
+    -- TEAM CHECK: If on same team, stop here (leaves ESP removed)
     if TeamCheck and player.Team ~= nil and player.Team == LocalPlayer.Team then
-        return
+        return 
     end
+
+    -- CREATE HIGHLIGHT (Enemies Only)
     local highlight = Instance.new("Highlight")
     highlight.Name = "Delta_ESP"
     highlight.Adornee = character
@@ -291,17 +313,24 @@ end
 
 local function MonitorPlayer(player)
     if player == LocalPlayer then return end
+
+    -- Trigger when character spawns
     player.CharacterAdded:Connect(function(char)
         ToggleESP(player, char)
     end)
+
+    -- Trigger if character already exists
     if player.Character then
         task.spawn(ToggleESP, player, player.Character)
     end
+
+    -- Trigger if they change teams
     player:GetPropertyChangedSignal("Team"):Connect(function()
         ToggleESP(player, player.Character)
     end)
 end
 
+-- Function to refresh all players (used when toggling ESP on/off)
 local function refreshAllESP()
     for _, p in pairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then
@@ -310,6 +339,7 @@ local function refreshAllESP()
     end
 end
 
+-- When you change teams, refresh everyone
 LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
     if espEnabled then
         for _, p in pairs(Players:GetPlayers()) do
@@ -320,60 +350,89 @@ LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
     end
 end)
 
+-- Initialize monitoring (always active, but ESP only appears when enabled)
 for _, p in pairs(Players:GetPlayers()) do
     MonitorPlayer(p)
 end
 Players.PlayerAdded:Connect(MonitorPlayer)
 
--- ESP Tab UI
-ESPTab:AddLabel("ESP - Highlights enemies using Team property")
-ESPTab:AddLabel("Color: Red | Team check: ON")
-ESPTab:AddToggle("Enable ESP", {
-    Default = false,
+-- ESP Tab UI (WindUI)
+ESPTab:Section({ Title = "ESP - Highlights enemies using Team property", TextSize = 14 })
+ESPTab:Section({ Title = "Color: Red | Team check: ON", TextSize = 12, TextTransparency = 0.5 })
+
+ESPTab:Toggle({
+    Title = "Enable ESP",
+    Value = false,
     Callback = function(v)
         espEnabled = v
         refreshAllESP()
+    end,
+})
+
+-- Optional: add settings for color and team check (uncomment if desired)
+-- ESPTab:Colorpicker({Title="Enemy Color", Default=Enemy_Color, Callback=function(c) Enemy_Color=c; refreshAllESP() end})
+-- ESPTab:Toggle({Title="Team Check", Value=TeamCheck, Callback=function(v) TeamCheck=v; refreshAllESP() end})
+
+-- ================================
+-- Misc: Hide Rayfield Open Button (still works if Rayfield is present)
+-- ================================
+MiscTab:Section({ Title = "FastDex UI Phone - Hide the floating open button", TextSize = 14 })
+
+MiscTab:Button({
+    Title = "Hide Open Button",
+    Justify = "Center",
+    Callback = function()
+        local function findRayfield()
+            for _, obj in ipairs(CoreGui:GetChildren()) do
+                if obj:FindFirstChild("Rayfield") then
+                    return obj.Rayfield
+                end
+            end
+            return nil
+        end
+
+        local RayfieldUI = findRayfield()
+        if not RayfieldUI then
+            warn("Rayfield UI not found.")
+            return
+        end
+
+        local function fixPrompt(prompt)
+            if not prompt or not prompt:FindFirstChild("Title") then return end
+            prompt.Title.Visible = false
+            prompt.BackgroundTransparency = 1
+            prompt.Title:GetPropertyChangedSignal("Visible"):Connect(function()
+                if prompt.Title.Visible then
+                    prompt.Title.Visible = false
+                end
+            end)
+            prompt:GetPropertyChangedSignal("BackgroundTransparency"):Connect(function()
+                if prompt.BackgroundTransparency ~= 1 then
+                    prompt.BackgroundTransparency = 1
+                end
+            end)
+        end
+
+        local existing = RayfieldUI:FindFirstChild("Prompt")
+        if existing then
+            fixPrompt(existing)
+        end
+
+        RayfieldUI.ChildAdded:Connect(function(child)
+            if child.Name == "Prompt" then
+                fixPrompt(child)
+            end
+        end)
+
+        WindUI:Notify({
+            Title = "Hide Button",
+            Content = "Open button hidden!",
+        })
     end
 })
 
--- (Optional: uncomment to add ColorPicker and TeamCheck toggle)
--- ESPTab:AddColorPicker("Enemy Color", { Default = Enemy_Color, Callback = function(c) Enemy_Color = c; refreshAllESP() end })
--- ESPTab:AddToggle("Team Check", { Default = TeamCheck, Callback = function(v) TeamCheck = v; refreshAllESP() end })
-
 -- ================================
--- Misc: Hide Fluent Toggle Button
--- ================================
-MiscTab:AddLabel("Hide the floating open button (Fluent Toggle)")
-
-local function findFluentToggle()
-    for _, obj in ipairs(CoreGui:GetChildren()) do
-        if obj:IsA("ScreenGui") and obj.Name == "Fluent" then
-            for _, child in ipairs(obj:GetChildren()) do
-                if child:IsA("ImageButton") and child.Name == "ToggleButton" then
-                    return child
-                end
-            end
-        end
-    end
-    return nil
-end
-
-MiscTab:AddButton("Hide Toggle Button", function()
-    local toggleBtn = findFluentToggle()
-    if toggleBtn then
-        toggleBtn.Visible = false
-        Fluent:Notify({
-            Title = "Hide Button",
-            Content = "Fluent toggle button hidden!",
-            Duration = 2
-        })
-    else
-        warn("Fluent toggle button not found.")
-    end
-end)
-
--- ================================
--- AutoCollect (unchanged logic)
+-- AutoCollect Feature (unchanged)
 -- ================================
 local remote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Networking"):WaitForChild("RE/Events/CollectEventSpawnable")
 local ITEM_NAME = "Sombrero"
@@ -397,6 +456,7 @@ local collectorEnabled = false
 local function startCollector()
     if collectorEnabled then return end
     collectorEnabled = true
+
     task.spawn(function()
         local descendants = workspace:GetDescendants()
         for i = 1, #descendants do
@@ -407,6 +467,7 @@ local function startCollector()
             if i % 50 == 0 then task.wait() end
         end
     end)
+
     collectorConnection = workspace.DescendantAdded:Connect(function(newObject)
         if newObject.Name ~= ITEM_NAME and not IsA(newObject, "Model") then
             return
@@ -424,26 +485,27 @@ local function stopCollector()
     end
 end
 
-AutoCollectTab:AddLabel("Auto-collect '" .. ITEM_NAME .. "' items (low‑lag mode)")
-AutoCollectTab:AddToggle("Enable AutoCollect", {
-    Default = false,
+-- AutoCollect Tab UI (WindUI)
+AutoCollectTab:Section({ Title = "Auto-collect '" .. ITEM_NAME .. "' items (low‑lag mode)", TextSize = 14 })
+
+AutoCollectTab:Toggle({
+    Title = "Enable AutoCollect",
+    Value = false,
     Callback = function(value)
         if value then
             startCollector()
-            Fluent:Notify({
+            WindUI:Notify({
                 Title = "AutoCollect",
                 Content = "Collector started!",
-                Duration = 2
             })
         else
             stopCollector()
-            Fluent:Notify({
+            WindUI:Notify({
                 Title = "AutoCollect",
                 Content = "Collector stopped.",
-                Duration = 2
             })
         end
-    end
+    end,
 })
 
-print("FastDex - Hitbox, ESP (Team-based), Hide Button & AutoCollect loaded with Fluent UI.")
+print("FastDex - Hitbox, ESP (Team-based), Hide Button & AutoCollect loaded (WindUI edition).")
