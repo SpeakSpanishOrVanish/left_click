@@ -1,5 +1,5 @@
 -- Instant-Shot Aimbot for Duels: Murderers vs Sheriffs
--- Updated for new remote structure (hashed kill remote + showBeam arguments)
+-- Fully dynamic: auto-detects kill remote & weapon
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -25,28 +25,25 @@ local stroke = nil
 
 local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- ===== Remote Caching (updated) =====
--- Find the hashed kill remote (from spy log)
-local netFolder = ReplicatedStorage:FindFirstChild("Packages")
-local killRemote = nil
-if netFolder then
-    local net = netFolder:FindFirstChild("Net")
-    if net then
-        -- The exact hashed name from your spy log
-        killRemote = net:FindFirstChild("RE/5768917069394a5b182b3fb046a0659798cc41e7f676e470dc4f0161beeb378b")
-        -- If it ever changes, you can uncomment the line below to find any "RE/" remote
-        -- if not killRemote then
-        --     for _, child in pairs(net:GetChildren()) do
-        --         if string.match(child.Name, "^RE/") then
-        --             killRemote = child
-        --             break
-        --         end
-        --     end
-        -- end
+-- ===== Dynamic Remote Finder =====
+local function findKillRemote()
+    local net = ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("Net")
+    if not net then return nil end
+    -- Look for any remote with name starting with "RE/"
+    for _, child in pairs(net:GetChildren()) do
+        if string.match(child.Name, "^RE/") then
+            return child
+        end
     end
+    return nil
 end
 
--- Generate a random UUID (simulates the game's bullet ID)
+local killRemote = findKillRemote()
+if not killRemote then
+    warn("Kill remote not found – make sure you're in a game round")
+end
+
+-- Generate a random UUID (bullet ID)
 local function generateUUID()
     local template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
     return string.gsub(template, "[xy]", function(c)
@@ -73,7 +70,7 @@ local function isValidTarget(otherPlayer)
     return true
 end
 
--- ===== Weapon & Combat =====
+-- ===== Weapon Detection (any tool with "fire" child) =====
 local function getWeapon()
     local char = player.Character
     if not char then return nil end
@@ -132,7 +129,7 @@ local function getNearestVisibleEnemy()
     return nearest
 end
 
--- ===== Updated Shoot Function (with new remote structure) =====
+-- ===== Updated Shoot Function (dynamic) =====
 local function shootEnemy(targetPlayer)
     local char = player.Character
     if not char then return false end
@@ -147,25 +144,32 @@ local function shootEnemy(targetPlayer)
     local hitPos = tRoot.Position
     local dir = (hitPos - startPos).Unit
 
-    -- 1. Fire the "fire" remote (sound / animation) – unchanged
+    -- 1. Fire the "fire" remote (sound / animation)
     local fireRemote = weapon:FindFirstChild("fire")
     if fireRemote then
         pcall(function() fireRemote:FireServer() end)
     end
 
-    -- 2. Fire the "showBeam" remote with new arguments: (startPos, hitPos, handle)
+    -- 2. Fire "showBeam" with arguments: (startPos, hitPos, handle)
     local showBeamRemote = weapon:FindFirstChild("showBeam")
     if showBeamRemote then
         pcall(function() showBeamRemote:FireServer(startPos, hitPos, handle) end)
     end
 
-    -- 3. Fire the hashed kill remote (if found) with UUID + target + direction
+    -- 3. Fire the kill remote (auto-detected) with UUID + target + direction
     if killRemote then
         local bulletId = generateUUID()
         pcall(function() killRemote:FireServer(bulletId, targetPlayer, dir) end)
         return true
     else
-        warn("Kill remote not found – update the hashed name")
+        -- Try to re-find the kill remote (in case it was nil earlier)
+        killRemote = findKillRemote()
+        if killRemote then
+            local bulletId = generateUUID()
+            pcall(function() killRemote:FireServer(bulletId, targetPlayer, dir) end)
+            return true
+        end
+        warn("Kill remote still not found")
         return false
     end
 end
@@ -214,14 +218,12 @@ local function createGUI()
     stroke.Thickness = 3.0
     stroke.LineJoinMode = Enum.LineJoinMode.Round
 
-    -- Color update with tween
     local function setButtonState(isReady)
         local targetColor = isReady and readyColor or cooldownColor
         local colorTween = TweenService:Create(button, tweenInfo, {BackgroundColor3 = targetColor})
         colorTween:Play()
     end
 
-    -- Instant shoot
     local function instantShoot()
         if not canShoot then return end
         if not player.Character or not player.Character:FindFirstChild("Humanoid") then return end
@@ -250,6 +252,8 @@ end
 -- ===== Initialize =====
 player.CharacterAdded:Connect(function()
     task.wait(0.1)
+    -- Re-find kill remote on respawn (in case it changes)
+    killRemote = findKillRemote()
     createGUI()
 end)
 
@@ -260,4 +264,4 @@ else
     createGUI()
 end
 
-print("Updated aimbot loaded – using new remote structure (hashed kill remote + fixed showBeam)")
+print("Dynamic aimbot loaded – automatically finds kill remote and weapon")
