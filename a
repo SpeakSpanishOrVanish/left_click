@@ -1,511 +1,263 @@
--- FastDex - MVS - Hitbox + ESP (Team-based) + Hide Button + AutoCollect
--- GUI converted from Rayfield to WindUI
+-- Instant-Shot Aimbot for Duels: Murderers vs Sheriffs
+-- Updated for new remote structure (hashed kill remote + showBeam arguments)
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
 
--- Load WindUI
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+local player = Players.LocalPlayer
 
--- Create Window
-local Window = WindUI:CreateWindow({
-    Title = "FastDex - Hitbox + ESP",
-    Folder = "FastDexConfig",
-    Icon = "solar:folder-2-bold-duotone",
-    NewElements = true,
-    HideSearchBar = false,
-    OpenButton = {
-        Title = "Open FastDex UI",
-        Enabled = true,
-        Draggable = true,
-        OnlyMobile = false,
-        Scale = 0.5,
-    },
-})
+-- ===== Settings =====
+local cooldownTime = 2.5
+local lastShotTime = 0
+local canShoot = true
 
--- Create Tabs
-local HitboxTab = Window:Tab({ Title = "Hitbox", Icon = "solar:target-bold", IconShape = "Square", Border = true })
-local ESPTab = Window:Tab({ Title = "ESP", Icon = "solar:eye-bold", IconShape = "Square", Border = true })
-local MiscTab = Window:Tab({ Title = "Misc", Icon = "solar:settings-bold", IconShape = "Square", Border = true })
-local AutoCollectTab = Window:Tab({ Title = "AutoCollect", Icon = "solar:archive-bold", IconShape = "Square", Border = true })
+-- Colors
+local readyColor = Color3.fromRGB(0, 255, 0)
+local cooldownColor = Color3.fromRGB(255, 0, 0)
 
--- ================================
--- Helper Functions (Team Detection for Hitbox – unchanged)
--- ================================
-local function getTeamFrames()
-    local ok, redFrame, blueFrame = pcall(function()
-        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if not pg then return nil, nil end
-        local main = pg:FindFirstChild("Main")
-        if not main then return nil, nil end
-        local mgf = main:FindFirstChild("MainGameFrame")
-        if not mgf then return nil, nil end
-        local pf = mgf:FindFirstChild("PlayersFrame")
-        if not pf then return nil, nil end
-        return pf:FindFirstChild("TeamRedFrame"), pf:FindFirstChild("TeamBlueFrame")
+-- ===== GUI =====
+local screenGui = nil
+local button = nil
+local stroke = nil
+
+local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- ===== Remote Caching (updated) =====
+-- Find the hashed kill remote (from spy log)
+local netFolder = ReplicatedStorage:FindFirstChild("Packages")
+local killRemote = nil
+if netFolder then
+    local net = netFolder:FindFirstChild("Net")
+    if net then
+        -- The exact hashed name from your spy log
+        killRemote = net:FindFirstChild("RE/5768917069394a5b182b3fb046a0659798cc41e7f676e470dc4f0161beeb378b")
+        -- If it ever changes, you can uncomment the line below to find any "RE/" remote
+        -- if not killRemote then
+        --     for _, child in pairs(net:GetChildren()) do
+        --         if string.match(child.Name, "^RE/") then
+        --             killRemote = child
+        --             break
+        --         end
+        --     end
+        -- end
+    end
+end
+
+-- Generate a random UUID (simulates the game's bullet ID)
+local function generateUUID()
+    local template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+    return string.gsub(template, "[xy]", function(c)
+        local v = (c == "x") and math.random(0, 0xf) or math.random(8, 0xb)
+        return string.format("%x", v)
     end)
-    if not ok or not redFrame or not blueFrame then
-        return nil, nil
-    end
-    return redFrame, blueFrame
 end
 
-local function readNames(frame)
-    local names = {}
-    for _, child in ipairs(frame:GetChildren()) do
-        if child:IsA("Frame") then
-            table.insert(names, child.Name)
-        end
-    end
-    return names
+-- ===== Team Check =====
+local function isValidTarget(otherPlayer)
+    if not otherPlayer or otherPlayer == player then return false end
+    if not otherPlayer.Character then return false end
+    local hum = otherPlayer.Character:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+
+    local myGame = player:GetAttribute("Game")
+    local theirGame = otherPlayer:GetAttribute("Game")
+    if myGame and theirGame and myGame ~= theirGame then return false end
+
+    local myTeam = player:GetAttribute("Team")
+    local theirTeam = otherPlayer:GetAttribute("Team")
+    if myTeam and theirTeam and myTeam == theirTeam then return false end
+
+    return true
 end
 
-local function normalizeName(n)
-    return tostring(n):gsub("%s+", "")
-end
-
-local function getEnemies()
-    local redFrame, blueFrame = getTeamFrames()
-    if not redFrame or not blueFrame then
-        return {}
-    end
-
-    local redRaw = readNames(redFrame)
-    local blueRaw = readNames(blueFrame)
-
-    local youInRed, youInBlue = false, false
-    local redSet, blueSet = {}, {}
-
-    for _, n in ipairs(redRaw) do
-        local nn = normalizeName(n)
-        redSet[nn] = true
-        if nn == normalizeName(LocalPlayer.Name) then
-            youInRed = true
+-- ===== Weapon & Combat =====
+local function getWeapon()
+    local char = player.Character
+    if not char then return nil end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool:FindFirstChild("fire") then
+            return tool
         end
     end
-
-    for _, n in ipairs(blueRaw) do
-        local nn = normalizeName(n)
-        blueSet[nn] = true
-        if nn == normalizeName(LocalPlayer.Name) then
-            youInBlue = true
-        end
-    end
-    if not (youInRed or youInBlue) then
-        return {}
-    end
-
-    local enemySet = youInRed and blueSet or redSet
-    local enemies = {}
-
-    for name,_ in pairs(enemySet) do
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if normalizeName(plr.Name) == name and plr ~= LocalPlayer then
-                table.insert(enemies, plr)
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, tool in pairs(bp:GetChildren()) do
+            if tool:IsA("Tool") and tool:FindFirstChild("fire") then
+                tool.Parent = char
+                return tool
             end
         end
     end
-    return enemies
+    return nil
 end
 
--- ================================
--- Hitbox Expander (with wall check) – unchanged
--- ================================
-_G.HeadSize = nil
-_G.Disabled = false
-_G.Transparency = nil
-_G.SelectedColor = nil
-_G.Originals = {}
-_G.AntiWall = false
-local visibilityCache = {}
-
-local function isVisible(part)
-    local cam = Workspace.CurrentCamera
-    if not cam then return true end
+local function hasClearLineOfSight(targetPlayer)
+    local char = player.Character
+    local tChar = targetPlayer.Character
+    if not char or not tChar then return false end
+    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    local tRoot = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso")
+    if not myRoot or not tRoot then return false end
+    local dir = (tRoot.Position - myRoot.Position).Unit
+    local dist = (tRoot.Position - myRoot.Position).Magnitude
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Blacklist
-    params.FilterDescendantsInstances = {LocalPlayer.Character}
-    local result = Workspace:Raycast(cam.CFrame.Position, (part.Position - cam.CFrame.Position), params)
-    if not result then return true end
-    return result.Instance:IsDescendantOf(part.Parent)
+    params.FilterDescendantsInstances = {char, tChar}
+    params.IgnoreWater = true
+    return workspace:Raycast(myRoot.Position, dir * dist, params) == nil
 end
 
-local function applyHitbox(v)
-    if v == LocalPlayer then return end
-    local char = v.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+local function getNearestVisibleEnemy()
+    local char = player.Character
+    if not char then return nil end
+    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    if not myRoot then return nil end
 
-    if _G.AntiWall and visibilityCache[v.Name] == false then
-        local orig = _G.Originals[v.Name]
-        if orig then
-            hrp.Size = orig.Size
-            hrp.Transparency = orig.Transparency
-            hrp.BrickColor = orig.Color
-            hrp.Material = orig.Material
-            hrp.CanCollide = true
+    local nearest, minDist = nil, math.huge
+    for _, other in pairs(Players:GetPlayers()) do
+        if isValidTarget(other) then
+            local oRoot = other.Character:FindFirstChild("HumanoidRootPart") or other.Character:FindFirstChild("Torso")
+            if oRoot then
+                local dist = (myRoot.Position - oRoot.Position).Magnitude
+                if dist < minDist and hasClearLineOfSight(other) then
+                    minDist = dist
+                    nearest = other
+                end
+            end
         end
-        return
+    end
+    return nearest
+end
+
+-- ===== Updated Shoot Function (with new remote structure) =====
+local function shootEnemy(targetPlayer)
+    local char = player.Character
+    if not char then return false end
+    local weapon = getWeapon()
+    if not weapon then return false end
+    local handle = weapon:FindFirstChild("Handle")
+    if not handle then return false end
+    local tRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Torso")
+    if not tRoot then return false end
+
+    local startPos = handle.Position
+    local hitPos = tRoot.Position
+    local dir = (hitPos - startPos).Unit
+
+    -- 1. Fire the "fire" remote (sound / animation) – unchanged
+    local fireRemote = weapon:FindFirstChild("fire")
+    if fireRemote then
+        pcall(function() fireRemote:FireServer() end)
     end
 
-    if _G.Disabled then
-        if not _G.Originals[v.Name] then
-            _G.Originals[v.Name] = {
-                Size = hrp.Size,
-                Transparency = hrp.Transparency,
-                Color = hrp.BrickColor,
-                Material = hrp.Material
-            }
-        end
-        if _G.HeadSize then hrp.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize) end
-        if _G.Transparency then hrp.Transparency = _G.Transparency end
-        if _G.SelectedColor then hrp.BrickColor = BrickColor.new(_G.SelectedColor) end
-        hrp.Material = Enum.Material.Neon
-        hrp.CanCollide = false
+    -- 2. Fire the "showBeam" remote with new arguments: (startPos, hitPos, handle)
+    local showBeamRemote = weapon:FindFirstChild("showBeam")
+    if showBeamRemote then
+        pcall(function() showBeamRemote:FireServer(startPos, hitPos, handle) end)
+    end
+
+    -- 3. Fire the hashed kill remote (if found) with UUID + target + direction
+    if killRemote then
+        local bulletId = generateUUID()
+        pcall(function() killRemote:FireServer(bulletId, targetPlayer, dir) end)
+        return true
     else
-        local orig = _G.Originals[v.Name]
-        if orig then
-            hrp.Size = orig.Size
-            hrp.Transparency = orig.Transparency
-            hrp.BrickColor = orig.Color
-            hrp.Material = orig.Material
-            hrp.CanCollide = true
-        end
+        warn("Kill remote not found – update the hashed name")
+        return false
     end
 end
 
-local function setupPlayer(v)
-    visibilityCache[v.Name] = false
-    v.CharacterAdded:Connect(function()
-        task.wait(0.15)
-        applyHitbox(v)
-    end)
-    if v.Character then applyHitbox(v) end
-end
+-- ===== Create GUI =====
+local function createGUI()
+    if screenGui then screenGui:Destroy() end
 
-for _, v in pairs(Players:GetPlayers()) do setupPlayer(v) end
-Players.PlayerAdded:Connect(setupPlayer)
+    local playerGui = player:WaitForChild("PlayerGui")
 
--- Visibility update loop for AntiWall
-task.spawn(function()
-    while true do
-        if _G.AntiWall then
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr ~= LocalPlayer then
-                    local c = plr.Character
-                    local hrp = c and c:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        visibilityCache[plr.Name] = isVisible(hrp)
-                    end
-                end
-            end
-        end
-        task.wait(0.15)
-    end
-end)
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AimbotButtonGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.Parent = playerGui
 
--- Continuous hitbox application loop
-task.spawn(function()
-    while true do
-        for _, plr in ipairs(Players:GetPlayers()) do
-            applyHitbox(plr)
-        end
-        task.wait(0.16)
-    end
-end)
+    local shadow = Instance.new("Frame")
+    shadow.Size = UDim2.new(0, 76, 0, 76)
+    shadow.AnchorPoint = Vector2.new(1, 1)
+    shadow.Position = UDim2.new(1, -20, 1, -180)
+    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.BackgroundTransparency = 0.85
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = 9
+    shadow.Parent = screenGui
+    Instance.new("UICorner", shadow).CornerRadius = UDim.new(0, 16)
 
--- Hitbox Tab UI (WindUI)
-HitboxTab:Section({ Title = "Hitbox Expander with Wall Check & Transparency", TextSize = 14 })
+    button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, 70, 0, 70)
+    button.AnchorPoint = Vector2.new(1, 1)
+    button.Position = UDim2.new(1, -23, 1, -183)
+    button.BackgroundColor3 = readyColor
+    button.BackgroundTransparency = 0.85
+    button.BorderSizePixel = 0
+    button.Text = ""
+    button.AutoButtonColor = false
+    button.ZIndex = 10
+    button.Parent = screenGui
 
-HitboxTab:Toggle({
-    Title = "Enable Hitbox",
-    Value = false,
-    Callback = function(val)
-        _G.Disabled = val
-        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end,
-})
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 14)
 
-HitboxTab:Toggle({
-    Title = "Anti Wall Shot",
-    Value = false,
-    Callback = function(val)
-        _G.AntiWall = val
-    end,
-})
+    stroke = Instance.new("UIStroke", button)
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Transparency = 0.0
+    stroke.Thickness = 3.0
+    stroke.LineJoinMode = Enum.LineJoinMode.Round
 
-HitboxTab:Space()
-
-HitboxTab:Dropdown({
-    Title = "Choose Color",
-    Values = {"Gray", "Bright red", "Bright blue", "Bright yellow", "Bright green", "White", "Black"},
-    Value = nil,
-    AllowNone = false,
-    Callback = function(opt)
-        _G.SelectedColor = opt
-        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end,
-})
-
-HitboxTab:Space()
-
-HitboxTab:Input({
-    Title = "Head Size",
-    Placeholder = "1 - 50",
-    Type = "Input",
-    Callback = function(txt)
-        local n = tonumber(txt)
-        _G.HeadSize = n and math.clamp(n, 1, 50) or nil
-        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end,
-})
-
-HitboxTab:Input({
-    Title = "Transparency",
-    Placeholder = "0 - 1",
-    Type = "Input",
-    Callback = function(txt)
-        local n = tonumber(txt)
-        _G.Transparency = n and math.clamp(n, 0, 1) or nil
-        for _, plr in pairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end,
-})
-
--- ================================
--- NEW ESP (based on Team property) – unchanged
--- ================================
-local espEnabled = false
-local Enemy_Color = Color3.fromRGB(255, 0, 0) -- Red
-local TeamCheck = true
-
-local function ToggleESP(player, character)
-    if not character then return end
-    
-    -- Remove existing highlight first
-    local existing = character:FindFirstChild("Delta_ESP")
-    if existing then existing:Destroy() end
-
-    -- If ESP is disabled globally, don't add anything
-    if not espEnabled then return end
-
-    -- TEAM CHECK: If on same team, stop here (leaves ESP removed)
-    if TeamCheck and player.Team ~= nil and player.Team == LocalPlayer.Team then
-        return 
+    -- Color update with tween
+    local function setButtonState(isReady)
+        local targetColor = isReady and readyColor or cooldownColor
+        local colorTween = TweenService:Create(button, tweenInfo, {BackgroundColor3 = targetColor})
+        colorTween:Play()
     end
 
-    -- CREATE HIGHLIGHT (Enemies Only)
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "Delta_ESP"
-    highlight.Adornee = character
-    highlight.FillColor = Enemy_Color
-    highlight.FillTransparency = 0.5
-    highlight.OutlineColor = Color3.new(1, 1, 1)
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.Parent = character
-end
+    -- Instant shoot
+    local function instantShoot()
+        if not canShoot then return end
+        if not player.Character or not player.Character:FindFirstChild("Humanoid") then return end
+        if not getWeapon() then return end
 
-local function MonitorPlayer(player)
-    if player == LocalPlayer then return end
-
-    -- Trigger when character spawns
-    player.CharacterAdded:Connect(function(char)
-        ToggleESP(player, char)
-    end)
-
-    -- Trigger if character already exists
-    if player.Character then
-        task.spawn(ToggleESP, player, player.Character)
-    end
-
-    -- Trigger if they change teams
-    player:GetPropertyChangedSignal("Team"):Connect(function()
-        ToggleESP(player, player.Character)
-    end)
-end
-
--- Function to refresh all players (used when toggling ESP on/off)
-local function refreshAllESP()
-    for _, p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            ToggleESP(p, p.Character)
-        end
-    end
-end
-
--- When you change teams, refresh everyone
-LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
-    if espEnabled then
-        for _, p in pairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer and p.Character then
-                ToggleESP(p, p.Character)
-            end
-        end
-    end
-end)
-
--- Initialize monitoring (always active, but ESP only appears when enabled)
-for _, p in pairs(Players:GetPlayers()) do
-    MonitorPlayer(p)
-end
-Players.PlayerAdded:Connect(MonitorPlayer)
-
--- ESP Tab UI (WindUI)
-ESPTab:Section({ Title = "ESP - Highlights enemies using Team property", TextSize = 14 })
-ESPTab:Section({ Title = "Color: Red | Team check: ON", TextSize = 12, TextTransparency = 0.5 })
-
-ESPTab:Toggle({
-    Title = "Enable ESP",
-    Value = false,
-    Callback = function(v)
-        espEnabled = v
-        refreshAllESP()
-    end,
-})
-
--- Optional: add settings for color and team check (uncomment if desired)
--- ESPTab:Colorpicker({Title="Enemy Color", Default=Enemy_Color, Callback=function(c) Enemy_Color=c; refreshAllESP() end})
--- ESPTab:Toggle({Title="Team Check", Value=TeamCheck, Callback=function(v) TeamCheck=v; refreshAllESP() end})
-
--- ================================
--- Misc: Hide Rayfield Open Button (still works if Rayfield is present)
--- ================================
-MiscTab:Section({ Title = "FastDex UI Phone - Hide the floating open button", TextSize = 14 })
-
-MiscTab:Button({
-    Title = "Hide Open Button",
-    Justify = "Center",
-    Callback = function()
-        local function findRayfield()
-            for _, obj in ipairs(CoreGui:GetChildren()) do
-                if obj:FindFirstChild("Rayfield") then
-                    return obj.Rayfield
-                end
-            end
-            return nil
-        end
-
-        local RayfieldUI = findRayfield()
-        if not RayfieldUI then
-            warn("Rayfield UI not found.")
-            return
-        end
-
-        local function fixPrompt(prompt)
-            if not prompt or not prompt:FindFirstChild("Title") then return end
-            prompt.Title.Visible = false
-            prompt.BackgroundTransparency = 1
-            prompt.Title:GetPropertyChangedSignal("Visible"):Connect(function()
-                if prompt.Title.Visible then
-                    prompt.Title.Visible = false
-                end
-            end)
-            prompt:GetPropertyChangedSignal("BackgroundTransparency"):Connect(function()
-                if prompt.BackgroundTransparency ~= 1 then
-                    prompt.BackgroundTransparency = 1
-                end
+        local target = getNearestVisibleEnemy()
+        if target and shootEnemy(target) then
+            canShoot = false
+            lastShotTime = tick()
+            setButtonState(false)
+            task.spawn(function()
+                task.wait(cooldownTime)
+                canShoot = true
+                setButtonState(true)
             end)
         end
-
-        local existing = RayfieldUI:FindFirstChild("Prompt")
-        if existing then
-            fixPrompt(existing)
-        end
-
-        RayfieldUI.ChildAdded:Connect(function(child)
-            if child.Name == "Prompt" then
-                fixPrompt(child)
-            end
-        end)
-
-        WindUI:Notify({
-            Title = "Hide Button",
-            Content = "Open button hidden!",
-        })
     end
-})
 
--- ================================
--- AutoCollect Feature (unchanged)
--- ================================
-local remote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Networking"):WaitForChild("RE/Events/CollectEventSpawnable")
-local ITEM_NAME = "Sombrero"
-local IsA = game.IsA
+    button.MouseButton1Down:Connect(instantShoot)
 
-local function collect(obj)
-    if not (IsA(obj, "BasePart") or IsA(obj, "Model")) then return end
-    if obj.Name == ITEM_NAME or obj:FindFirstChild(ITEM_NAME) then
-        remote:FireServer(obj)
-        if IsA(obj, "BasePart") then
-            obj.CFrame = CFrame.new(0, 10000, 0)
-        elseif IsA(obj, "Model") then
-            obj:MoveTo(Vector3.new(0, 10000, 0))
-        end
-    end
+    canShoot = true
+    lastShotTime = 0
+    setButtonState(true)
 end
 
-local collectorConnection = nil
-local collectorEnabled = false
+-- ===== Initialize =====
+player.CharacterAdded:Connect(function()
+    task.wait(0.1)
+    createGUI()
+end)
 
-local function startCollector()
-    if collectorEnabled then return end
-    collectorEnabled = true
-
-    task.spawn(function()
-        local descendants = workspace:GetDescendants()
-        for i = 1, #descendants do
-            local v = descendants[i]
-            if v.Name == ITEM_NAME then
-                collect(v)
-            end
-            if i % 50 == 0 then task.wait() end
-        end
-    end)
-
-    collectorConnection = workspace.DescendantAdded:Connect(function(newObject)
-        if newObject.Name ~= ITEM_NAME and not IsA(newObject, "Model") then
-            return
-        end
-        task.defer(collect, newObject)
-    end)
+if player.Character then
+    createGUI()
+else
+    player.CharacterAdded:Wait()
+    createGUI()
 end
 
-local function stopCollector()
-    if not collectorEnabled then return end
-    collectorEnabled = false
-    if collectorConnection then
-        collectorConnection:Disconnect()
-        collectorConnection = nil
-    end
-end
-
--- AutoCollect Tab UI (WindUI)
-AutoCollectTab:Section({ Title = "Auto-collect '" .. ITEM_NAME .. "' items (low‑lag mode)", TextSize = 14 })
-
-AutoCollectTab:Toggle({
-    Title = "Enable AutoCollect",
-    Value = false,
-    Callback = function(value)
-        if value then
-            startCollector()
-            WindUI:Notify({
-                Title = "AutoCollect",
-                Content = "Collector started!",
-            })
-        else
-            stopCollector()
-            WindUI:Notify({
-                Title = "AutoCollect",
-                Content = "Collector stopped.",
-            })
-        end
-    end,
-})
-
-print("FastDex - Hitbox, ESP (Team-based), Hide Button & AutoCollect loaded (WindUI edition).")
+print("Updated aimbot loaded – using new remote structure (hashed kill remote + fixed showBeam)")
