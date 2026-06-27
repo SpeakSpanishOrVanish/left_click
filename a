@@ -833,6 +833,7 @@ local simConn
 local spamConn
 local spamAcc = 0
 local spamLast = 0
+-- 🔥 MODIFIED: 64 Hz with burst 8 (aggressive but smooth)
 local spamStep = 1 / 64
 local spamBurst = 8
 local ancConn
@@ -865,12 +866,14 @@ local function kill(o)
 	return nil
 end
 
+-- 🔥 MODIFIED: Cached ball to stop workspace scanning stutter
+local cachedBall = nil
 local function getBall()
-	local bm = gi and gi.BallModel
-	if bm and bm.Parent then
-		return bm
+	if cachedBall and cachedBall.Parent then
+		return cachedBall
 	end
-	return WS:FindFirstChild("GameBall", true) or WS:FindFirstChild("GameBall")
+	cachedBall = WS:FindFirstChild("GameBall", true) or WS:FindFirstChild("GameBall")
+	return cachedBall
 end
 
 local function tgtOn(ch)
@@ -1073,6 +1076,12 @@ local function bind(ch)
 
 		if not (ch.Parent and hrp.Parent and ring and ring.Parent) then
 			clearBind()
+			return
+		end
+
+		-- 🔥 MODIFIED: SKIP EVERYTHING if both spam AND visualizer are OFF
+		-- This completely stops the stutter!
+		if not cfg.spam and not cfg.vis then
 			return
 		end
 
