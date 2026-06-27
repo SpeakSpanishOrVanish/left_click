@@ -1,267 +1,1350 @@
--- Instant-Shot Aimbot for Duels: Murderers vs Sheriffs
--- Fully dynamic: auto-detects kill remote & weapon
+local gEnv
 
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-
-local player = Players.LocalPlayer
-
--- ===== Settings =====
-local cooldownTime = 2.5
-local lastShotTime = 0
-local canShoot = true
-
--- Colors
-local readyColor = Color3.fromRGB(0, 255, 0)
-local cooldownColor = Color3.fromRGB(255, 0, 0)
-
--- ===== GUI =====
-local screenGui = nil
-local button = nil
-local stroke = nil
-
-local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
--- ===== Dynamic Remote Finder =====
-local function findKillRemote()
-    local net = ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("Net")
-    if not net then return nil end
-    -- Look for any remote with name starting with "RE/"
-    for _, child in pairs(net:GetChildren()) do
-        if string.match(child.Name, "^RE/") then
-            return child
-        end
-    end
-    return nil
+do
+	local ok, env = pcall(function()
+		if type(getgenv) == "function" then
+			return getgenv()
+		end
+	end)
+	gEnv = ok and type(env) == "table" and env or _G
+	if type(gEnv) ~= "table" then
+		gEnv = {}
+	end
 end
 
-local killRemote = findKillRemote()
-if not killRemote then
-    warn("Kill remote not found – make sure you're in a game round")
+local function safeSvc(name, cr)
+	local ok, svc = pcall(function()
+		return game:GetService(name)
+	end)
+	if not ok or not svc then
+		return nil
+	end
+
+	local fn = type(cr) == "function" and cr or (type(cloneref) == "function" and cloneref or nil)
+	if fn then
+		local okRef, ref = pcall(fn, svc)
+		if okRef and ref then
+			return ref
+		end
+	end
+
+	return svc
 end
 
--- Generate a random UUID (bullet ID)
-local function generateUUID()
-    local template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
-    return string.gsub(template, "[xy]", function(c)
-        local v = (c == "x") and math.random(0, 0xf) or math.random(8, 0xb)
-        return string.format("%x", v)
-    end)
+local function safeCM(root, method, ...)
+	local obj = root
+	if type(root) == "string" then
+		obj = safeSvc(root)
+	end
+	if typeof(obj) ~= "Instance" then
+		return nil
+	end
+
+	local fn = obj[method]
+	if type(fn) ~= "function" then
+		return nil
+	end
+
+	local ok, res = pcall(fn, obj, ...)
+	if ok then
+		return res
+	end
+	return nil
 end
 
--- ===== Team Check =====
-local function isValidTarget(otherPlayer)
-    if not otherPlayer or otherPlayer == player then return false end
-    if not otherPlayer.Character then return false end
-    local hum = otherPlayer.Character:FindFirstChild("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
+local __lt = (function()
+	local globalEnv = gEnv or _G or {}
+	local sharedEnv = type(_G) == "table" and rawget(_G, "shared") or nil
+	local cacheHost = type(sharedEnv) == "table" and sharedEnv or (type(globalEnv) == "table" and globalEnv or nil)
+	if cacheHost then
+		local cached = rawget(cacheHost, "__lt_service_resolver")
+		if type(cached) == "table" then
+			if type(cached.cs) ~= "function" then
+				cached.cs = safeSvc
+			end
+			if type(cached.cm) ~= "function" then
+				cached.cm = safeCM
+			end
+			return cached
+		end
+	end
 
-    local myGame = player:GetAttribute("Game")
-    local theirGame = otherPlayer:GetAttribute("Game")
-    if myGame and theirGame and myGame ~= theirGame then return false end
+	local loaded
+	local loader = loadstring or load
+	if type(loader) == "function" then
+		local okSrc, src = pcall(function()
+			return game:HttpGet("https://ltseverydayyou.github.io/ServiceResolver.luau")
+		end)
+		if okSrc and type(src) == "string" and src ~= "" then
+			local okCompile, resolver = pcall(function()
+				return loader(src, "@ServiceResolver.luau")
+			end)
+			if okCompile and type(resolver) == "function" then
+				local okLoad, got = pcall(resolver)
+				if okLoad and type(got) == "table" then
+					loaded = got
+				end
+			end
+		end
+	end
 
-    local myTeam = player:GetAttribute("Team")
-    local theirTeam = otherPlayer:GetAttribute("Team")
-    if myTeam and theirTeam and myTeam == theirTeam then return false end
+	if type(loaded) ~= "table" then
+		loaded = {}
+	end
+	if type(loaded.cs) ~= "function" then
+		loaded.cs = safeSvc
+	end
+	if type(loaded.cm) ~= "function" then
+		loaded.cm = safeCM
+	end
 
-    return true
+	if cacheHost then
+		cacheHost.__lt_service_resolver = loaded
+	end
+
+	return loaded
+end)()
+
+local function safeReq(mod)
+	if typeof(mod) ~= "Instance" or not mod.Parent or not mod:IsA("ModuleScript") then
+		return nil
+	end
+	if type(require) ~= "function" then
+		return nil
+	end
+	local ok, res = pcall(require, mod)
+	if ok then
+		return res
+	end
+	return nil
 end
 
--- ===== Weapon Detection (any tool with "fire" child) =====
-local function getWeapon()
-    local char = player.Character
-    if not char then return nil end
-    for _, tool in pairs(char:GetChildren()) do
-        if tool:IsA("Tool") and tool:FindFirstChild("fire") then
-            return tool
-        end
-    end
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, tool in pairs(bp:GetChildren()) do
-            if tool:IsA("Tool") and tool:FindFirstChild("fire") then
-                tool.Parent = char
-                return tool
-            end
-        end
-    end
-    return nil
+local function waitChild(parent, name, tm)
+	if typeof(parent) ~= "Instance" then
+		return nil
+	end
+	return parent:FindFirstChild(name) or parent:WaitForChild(name, tm or 10)
 end
 
-local function hasClearLineOfSight(targetPlayer)
-    local char = player.Character
-    local tChar = targetPlayer.Character
-    if not char or not tChar then return false end
-    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    local tRoot = tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso")
-    if not myRoot or not tRoot then return false end
-    local dir = (tRoot.Position - myRoot.Position).Unit
-    local dist = (tRoot.Position - myRoot.Position).Magnitude
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Blacklist
-    params.FilterDescendantsInstances = {char, tChar}
-    params.IgnoreWater = true
-    return workspace:Raycast(myRoot.Position, dir * dist, params) == nil
+local function stepSig()
+	local r = safeSvc("RunService")
+	return r and (r.PostSimulation or r.Heartbeat)
 end
 
-local function getNearestVisibleEnemy()
-    local char = player.Character
-    if not char then return nil end
-    local myRoot = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    if not myRoot then return nil end
-
-    local nearest, minDist = nil, math.huge
-    for _, other in pairs(Players:GetPlayers()) do
-        if isValidTarget(other) then
-            local oRoot = other.Character:FindFirstChild("HumanoidRootPart") or other.Character:FindFirstChild("Torso")
-            if oRoot then
-                local dist = (myRoot.Position - oRoot.Position).Magnitude
-                if dist < minDist and hasClearLineOfSight(other) then
-                    minDist = dist
-                    nearest = other
-                end
-            end
-        end
-    end
-    return nearest
+local function spamSig()
+	local r = safeSvc("RunService")
+	return r and (r.PostSimulation or r.Heartbeat)
 end
 
--- ===== Updated Shoot Function (dynamic) =====
-local function shootEnemy(targetPlayer)
-    local char = player.Character
-    if not char then return false end
-    local weapon = getWeapon()
-    if not weapon then return false end
-    local handle = weapon:FindFirstChild("Handle")
-    if not handle then return false end
-    local tRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Torso")
-    if not tRoot then return false end
+if type(gEnv.__na_aex_cleanup) == "function" then
+	pcall(gEnv.__na_aex_cleanup)
+end
+gEnv.__na_aex = true
+gEnv.__na_aex_cleanup = nil
 
-    local startPos = handle.Position
-    local hitPos = tRoot.Position
-    local dir = (hitPos - startPos).Unit
-
-    -- 1. Fire the "fire" remote (sound / animation)
-    local fireRemote = weapon:FindFirstChild("fire")
-    if fireRemote then
-        pcall(function() fireRemote:FireServer() end)
-    end
-
-    -- 2. Fire "showBeam" with arguments: (startPos, hitPos, handle)
-    local showBeamRemote = weapon:FindFirstChild("showBeam")
-    if showBeamRemote then
-        pcall(function() showBeamRemote:FireServer(startPos, hitPos, handle) end)
-    end
-
-    -- 3. Fire the kill remote (auto-detected) with UUID + target + direction
-    if killRemote then
-        local bulletId = generateUUID()
-        pcall(function() killRemote:FireServer(bulletId, targetPlayer, dir) end)
-        return true
-    else
-        -- Try to re-find the kill remote (in case it was nil earlier)
-        killRemote = findKillRemote()
-        if killRemote then
-            local bulletId = generateUUID()
-            pcall(function() killRemote:FireServer(bulletId, targetPlayer, dir) end)
-            return true
-        end
-        warn("Kill remote still not found")
-        return false
-    end
+if game.GameId ~= 4538598064 then
+	return
 end
 
--- ===== Create GUI =====
-local function createGUI()
-    if screenGui then screenGui:Destroy() end
+local cref = type(cloneref) == "function" and cloneref or nil
+local Plrs = __lt.cs("Players", cref)
+local Run = __lt.cs("RunService", cref)
+local SS = __lt.cs("SoundService", cref)
+local TS = __lt.cs("TweenService", cref)
+local RSrv = __lt.cs("ReplicatedStorage", cref)
+local UIS = __lt.cs("UserInputService", cref)
+local SG = __lt.cs("StarterGui", cref)
+local WS = workspace
 
-    local playerGui = player:WaitForChild("PlayerGui")
-
-    screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "AimbotButtonGui"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.Parent = playerGui
-
-    local shadow = Instance.new("Frame")
-    shadow.Size = UDim2.new(0, 76, 0, 76)
-    shadow.AnchorPoint = Vector2.new(1, 1)
-    shadow.Position = UDim2.new(1, -20, 1, -180)
-    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    shadow.BackgroundTransparency = 0.85
-    shadow.BorderSizePixel = 0
-    shadow.ZIndex = 9
-    shadow.Parent = screenGui
-    Instance.new("UICorner", shadow).CornerRadius = UDim.new(0, 16)
-
-    button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 70, 0, 70)
-    button.AnchorPoint = Vector2.new(1, 1)
-    button.Position = UDim2.new(1, -23, 1, -183)
-    button.BackgroundColor3 = readyColor
-    button.BackgroundTransparency = 0.85
-    button.BorderSizePixel = 0
-    button.Text = ""
-    button.AutoButtonColor = false
-    button.ZIndex = 10
-    button.Parent = screenGui
-
-    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 14)
-
-    stroke = Instance.new("UIStroke", button)
-    stroke.Color = Color3.fromRGB(255, 255, 255)
-    stroke.Transparency = 0.0
-    stroke.Thickness = 3.0
-    stroke.LineJoinMode = Enum.LineJoinMode.Round
-
-    local function setButtonState(isReady)
-        local targetColor = isReady and readyColor or cooldownColor
-        local colorTween = TweenService:Create(button, tweenInfo, {BackgroundColor3 = targetColor})
-        colorTween:Play()
-    end
-
-    local function instantShoot()
-        if not canShoot then return end
-        if not player.Character or not player.Character:FindFirstChild("Humanoid") then return end
-        if not getWeapon() then return end
-
-        local target = getNearestVisibleEnemy()
-        if target and shootEnemy(target) then
-            canShoot = false
-            lastShotTime = tick()
-            setButtonState(false)
-            task.spawn(function()
-                task.wait(cooldownTime)
-                canShoot = true
-                setButtonState(true)
-            end)
-        end
-    end
-
-    button.MouseButton1Down:Connect(instantShoot)
-
-    canShoot = true
-    lastShotTime = 0
-    setButtonState(true)
+local lp = Plrs and Plrs.LocalPlayer
+if not lp then
+	gEnv.__na_aex = nil
+	return
 end
 
--- ===== Initialize =====
-player.CharacterAdded:Connect(function()
-    task.wait(0.1)
-    -- Re-find kill remote on respawn (in case it changes)
-    killRemote = findKillRemote()
-    createGUI()
+local TSFolder = waitChild(RSrv, "TS", 10)
+local Remotes = waitChild(RSrv, "Remotes", 10)
+local GenRemotes = TSFolder and TSFolder:FindFirstChild("GeneratedNetworkRemotes")
+local BallSyncRemote = Remotes and Remotes:FindFirstChild("BallSyncData")
+
+local bmMod = TSFolder and safeReq(TSFolder:FindFirstChild("BindableManager"))
+local BM = bmMod and bmMod.BindableManager or nil
+local enumFolder = TSFolder and TSFolder:FindFirstChild("Enums")
+local abMod = enumFolder and safeReq(enumFolder:FindFirstChild("AbilityID"))
+local AbilityID = abMod and abMod.AbilityID or { Deflect = "Deflect" }
+local abilFolder = TSFolder and TSFolder:FindFirstChild("Abilities")
+local defMod = abilFolder and safeReq(abilFolder:FindFirstChild("DeflectAbility"))
+local Def = defMod and defMod.DeflectAbility or {}
+local PNotif = __lt.cm("ReplicatedStorage", "FindFirstChild", "PromptNotification")
+
+local function refreshRefs()
+	if not RSrv then
+		return
+	end
+	if not (TSFolder and TSFolder.Parent) then
+		TSFolder = RSrv:FindFirstChild("TS")
+	end
+	if not (Remotes and Remotes.Parent) then
+		Remotes = RSrv:FindFirstChild("Remotes")
+	end
+	if TSFolder and not (GenRemotes and GenRemotes.Parent) then
+		GenRemotes = TSFolder:FindFirstChild("GeneratedNetworkRemotes")
+	end
+	if Remotes and not (BallSyncRemote and BallSyncRemote.Parent) then
+		BallSyncRemote = Remotes:FindFirstChild("BallSyncData")
+	end
+end
+
+local oAvail
+if type(hookfunction) == "function" and type(Def.IsAvailable) == "function" then
+	pcall(function()
+		oAvail = hookfunction(Def.IsAvailable, function(self, ...)
+			return true
+		end)
+	end)
+end
+if not oAvail and type(Def) == "table" and type(Def.IsAvailable) == "function" then
+	pcall(function()
+		Def.IsAvailable = function(self, ...)
+			return true
+		end
+	end)
+end
+
+local cleanup
+local notify
+local parryRemote
+local parryMode
+local parryInitDone = false
+local parryRemoteLocked = false
+local cooldownFrame
+local probingRemote = false
+
+local function getCooldownFrame()
+	if cooldownFrame and cooldownFrame.Parent then
+		return cooldownFrame
+	end
+
+	local pg = lp:FindFirstChild("PlayerGui")
+	if not pg then
+		return nil
+	end
+
+	local ok, frame = pcall(function()
+		return (((((pg:WaitForChild("Interface", 1)):WaitForChild("HUD", 1)):WaitForChild("Bottom", 1)):WaitForChild("Deflect", 1)):WaitForChild("Button", 1)):WaitForChild("CooldownClipping", 1):WaitForChild("Cooldown", 1)
+	end)
+	if ok and frame then
+		cooldownFrame = frame
+		return cooldownFrame
+	end
+	return nil
+end
+
+local function sameSize(a, b)
+	return a
+		and b
+		and a.X.Scale == b.X.Scale
+		and a.X.Offset == b.X.Offset
+		and a.Y.Scale == b.Y.Scale
+		and a.Y.Offset == b.Y.Offset
+end
+
+local function validRemote(remote)
+	return typeof(remote) == "Instance" and remote.Parent ~= nil and remote:IsA("RemoteEvent")
+end
+
+local gameEnv
+local gameG
+
+local function getGameGlobal()
+	if type(gameG) == "table" then
+		return gameG, gameEnv
+	end
+
+	if type(getfenv) == "function" then
+		local fns = {}
+		if type(Def) == "table" then
+			fns[#fns + 1] = Def.Deflect
+			fns[#fns + 1] = Def.OnClientCreate
+			fns[#fns + 1] = Def.OnServerCreate
+			fns[#fns + 1] = Def.constructor
+		end
+
+		for i = 1, #fns do
+			local fn = fns[i]
+			if type(fn) == "function" then
+				local ok, env = pcall(getfenv, fn)
+				if ok and type(env) == "table" then
+					gameEnv = env
+					local g = rawget(env, "_G")
+					gameG = type(g) == "table" and g or env
+					return gameG, gameEnv
+				end
+			end
+		end
+	end
+
+	gameEnv = type(_G) == "table" and _G or {}
+	gameG = gameEnv
+	return gameG, gameEnv
+end
+
+local function getGameDid()
+	local g, env = getGameGlobal()
+	local did = type(g) == "table" and rawget(g, "did") or nil
+	if validRemote(did) then
+		return did
+	end
+
+	did = type(env) == "table" and rawget(env, "did") or nil
+	if validRemote(did) then
+		return did
+	end
+
+	return nil
+end
+
+local function setGameDid(remote)
+	local g, env = getGameGlobal()
+	if type(g) == "table" then
+		rawset(g, "did", remote)
+	end
+	if type(env) == "table" and env ~= g and rawget(env, "_G") == nil then
+		rawset(env, "did", remote)
+	end
+end
+
+local function cacheParryRemote(remote, mode, locked)
+	if not validRemote(remote) then
+		return nil
+	end
+
+	parryRemote = remote
+	parryMode = mode
+
+	if locked ~= nil then
+		parryRemoteLocked = locked and true or false
+	end
+
+	if mode == "buffer" then
+		setGameDid(remote)
+	end
+
+	return parryRemote, parryMode
+end
+
+local function getGeneratedRemote(id)
+	refreshRefs()
+	if not TSFolder then
+		return nil
+	end
+	if not (GenRemotes and GenRemotes.Parent) then
+		GenRemotes = TSFolder:FindFirstChild("GeneratedNetworkRemotes")
+	end
+
+	if not GenRemotes then
+		return nil
+	end
+
+	local remote = GenRemotes:FindFirstChild("RE_" .. tostring(id))
+	if validRemote(remote) then
+		return remote
+	end
+
+	return nil
+end
+
+local function resolveParryRemote()
+	refreshRefs()
+	if parryRemoteLocked then
+		if validRemote(parryRemote) then
+			return parryRemote, parryMode
+		end
+		return nil
+	end
+
+	if validRemote(parryRemote) then
+		return parryRemote, parryMode
+	end
+
+	local globalDid = getGameDid()
+	if validRemote(globalDid) then
+		return cacheParryRemote(globalDid, "buffer")
+	end
+
+	local byName = Remotes and Remotes:FindFirstChild("pr_" .. tostring(lp.UserId))
+	if validRemote(byName) then
+		return cacheParryRemote(byName, "buffer")
+	end
+
+	local generated = getGeneratedRemote(1)
+	if validRemote(generated) then
+		return cacheParryRemote(generated, "event")
+	end
+
+	return nil
+end
+
+local function makeDeflectBuffer(flag)
+	if type(buffer) == "table" and type(buffer.fromstring) == "function" then
+		if flag == 2 then
+			return buffer.fromstring("\2")
+		end
+		return buffer.fromstring("\1")
+	end
+	if type(buffer) == "table" and type(buffer.create) == "function" and type(buffer.writeu8) == "function" then
+		local payload = buffer.create(1)
+		buffer.writeu8(payload, 0, flag)
+		return payload
+	end
+	return nil
+end
+
+local function ensureParryInitialized()
+	if parryInitDone then
+		return true
+	end
+
+	local remote, mode = resolveParryRemote()
+	if not remote then
+		return false
+	end
+
+	if mode == "event" then
+		parryInitDone = true
+		return true
+	end
+
+	local payload = makeDeflectBuffer(2)
+	if not payload then
+		return false
+	end
+
+	local ok = pcall(function()
+		remote:FireServer(payload)
+	end)
+	if ok then
+		parryInitDone = true
+	end
+	return ok
+end
+
+local function probeNamedRemoteEvents()
+	refreshRefs()
+	if probingRemote or not Remotes then
+		return nil
+	end
+
+	local cd = getCooldownFrame()
+	local payloadInit = makeDeflectBuffer(2)
+	local payloadFire = makeDeflectBuffer(1)
+	if not (cd and payloadInit and payloadFire) then
+		return nil
+	end
+
+	probingRemote = true
+	local baseline = cd.Size
+
+	local candidates = {}
+	local direct = Remotes:FindFirstChild("pr_" .. tostring(lp.UserId))
+	if typeof(direct) == "Instance" and type(direct.FireServer) == "function" then
+		candidates[#candidates + 1] = direct
+	end
+	for _, remote in Remotes:GetChildren() do
+		if remote.Name == "RemoteEvent" and typeof(remote) == "Instance" and type(remote.FireServer) == "function" then
+			candidates[#candidates + 1] = remote
+		end
+	end
+
+	for i = 1, #candidates do
+		local remote = candidates[i]
+		if remote and remote.Parent then
+			pcall(function()
+				remote:FireServer(payloadInit)
+			end)
+			task.wait(0.03)
+			pcall(function()
+				remote:FireServer(payloadFire)
+			end)
+			task.wait(0.08)
+
+			local sz = cd.Size
+			local changed = not sameSize(sz, baseline)
+			if changed then
+				cacheParryRemote(remote, "buffer", true)
+				parryInitDone = true
+				notify("Parry remote found: " .. remote.Name, true)
+				probingRemote = false
+				return parryRemote, parryMode
+			end
+		end
+	end
+
+	probingRemote = false
+	return nil
+end
+
+local function getDeflectAbility()
+	if not BM or not AbilityID or AbilityID.Deflect == nil then
+		return nil
+	end
+
+	local okFn, fn = pcall(function()
+		return BM:GetFunction("AbilityManager::GetAbility")
+	end)
+	if not okFn or not fn then
+		return nil
+	end
+
+	local okAbility, ability = pcall(function()
+		return fn:Invoke(AbilityID.Deflect)
+	end)
+	if okAbility and type(ability) == "table" then
+		return ability
+	end
+	return nil
+end
+
+function notify(txt, okv)
+	task.defer(function()
+		if PNotif then
+			local ok = pcall(function()
+				PNotif:Fire(txt, okv)
+			end)
+			if ok then
+				return
+			end
+		end
+		if SG then
+			pcall(function()
+				SG:SetCore("SendNotification", {
+					Title = "Nameless Admin",
+					Text = tostring(txt),
+					Duration = 4
+				})
+			end)
+		end
+	end)
+end
+
+local function fireParryRemote(remote, mode, flag)
+	if not validRemote(remote) then
+		return false
+	end
+
+	if mode == "event" then
+		local ok = pcall(function()
+			remote:FireServer()
+		end)
+		return ok
+	end
+
+	local payload = makeDeflectBuffer(flag or 1)
+	if not payload then
+		return false
+	end
+
+	ensureParryInitialized()
+
+	local ok = pcall(function()
+		remote:FireServer(payload)
+	end)
+	return ok
+end
+
+local function sendParry()
+	local remote, mode = resolveParryRemote()
+	if remote and fireParryRemote(remote, mode, 1) then
+		return
+	end
+
+	local ability = getDeflectAbility()
+	if ability then
+		local did = rawget(ability, "did")
+		if validRemote(did) and fireParryRemote((cacheParryRemote(did, "buffer")), "buffer", 1) then
+			return
+		end
+	end
+
+	remote, mode = probeNamedRemoteEvents()
+	if remote and fireParryRemote(remote, mode, 1) then
+		return
+	end
+
+	if ability and type(ability.Deflect) == "function" and validRemote(getGameDid()) then
+		pcall(function()
+			ability:Deflect()
+		end)
+	end
+end
+
+notify("super scuffed autoparry loaded 💀💀💀", true)
+task.defer(function()
+	local found, mode = resolveParryRemote()
+	if found then
+		ensureParryInitialized()
+		notify("Parry remote detected successfully: " .. tostring(mode), true)
+		return
+	end
+
+	found, mode = probeNamedRemoteEvents()
+	if found then
+		notify("Parry remote detected successfully: " .. tostring(mode), true)
+	else
+		ensureParryInitialized()
+	end
 end)
 
-if player.Character then
-    createGUI()
-else
-    player.CharacterAdded:Wait()
-    createGUI()
+do
+	local mas = __lt.cm("SoundService", "FindFirstChild", "Master")
+	local mus = mas and mas:FindFirstChild("Music")
+	local gam = mus and mus:FindFirstChild("Game")
+	local lob = mus and mus:FindFirstChild("Lobby")
+	local main = lob and lob:FindFirstChild("Main")
+
+	if mus and gam and main then
+		for _, v in gam:GetChildren() do
+			if v:IsA("Sound") then
+				pcall(function()
+					v:Destroy()
+				end)
+			end
+		end
+
+		local ids = {
+			"rbxassetid://15448175657",
+			"rbxassetid://15448189246",
+			"rbxassetid://15492387259",
+			"rbxassetid://15492384385",
+			"rbxassetid://15619382428",
+			"rbxassetid://15619385373",
+			"rbxassetid://15933457903"
+		}
+
+		local spd = {1, 1.1, 1, 1, 1, 1, 1}
+		local MAXV = 1
+		local FADE = 0.35
+		local vars = table.create(#ids)
+
+		for i = 1, #ids do
+			local s = Instance.new("Sound")
+			s.Name = "Variant" .. i
+			s.SoundId = ids[i]
+			s.SoundGroup = mus
+			s.Looped = false
+			s.RollOffMode = Enum.RollOffMode.InverseTapered
+			s.PlaybackSpeed = spd[i]
+			pcall(function()
+				s.Pitch = spd[i]
+			end)
+			s.Volume = 0
+			s.Parent = gam
+			vars[i] = s
+		end
+
+		local function isPlay(s)
+			if not s or not s.Parent then
+				return false
+			end
+			local ok, v = pcall(function()
+				return s.IsPlaying
+			end)
+			if ok then
+				return v
+			end
+			ok, v = pcall(function()
+				return s.Playing
+			end)
+			return ok and v or false
+		end
+
+		local tws = {}
+
+		local function twVol(s, v, t)
+			if not (s and s.Parent) then
+				return
+			end
+
+			local old = tws[s]
+			if old then
+				pcall(function()
+					old:Cancel()
+				end)
+			end
+
+			local ok, tw = pcall(function()
+				return TS:Create(s, TweenInfo.new(t, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+					Volume = v
+				})
+			end)
+
+			if ok and tw then
+				tws[s] = tw
+				tw.Completed:Once(function()
+					if tws[s] == tw then
+						tws[s] = nil
+					end
+				end)
+				tw:Play()
+			else
+				pcall(function()
+					s.Volume = v
+				end)
+			end
+		end
+
+		local function stopFade(s, t)
+			if not (s and s.Parent) then
+				return
+			end
+			twVol(s, 0, t)
+			task.delay(t, function()
+				if not (s and s.Parent) then
+					return
+				end
+				pcall(function()
+					s:Stop()
+				end)
+				pcall(function()
+					s.Volume = 0
+				end)
+			end)
+		end
+
+		local rng = Random.new()
+		local cur, curI, con, tok = nil, nil, nil, 0
+
+		local function clearEnded()
+			if con then
+				con:Disconnect()
+				con = nil
+			end
+		end
+
+		local function pickNext(lastI)
+			if #vars <= 1 then
+				return 1
+			end
+			local i
+			repeat
+				i = rng:NextInteger(1, #vars)
+			until i ~= lastI
+			return i
+		end
+
+		local function playRand()
+			tok += 1
+			local my = tok
+			clearEnded()
+
+			local i = pickNext(curI)
+			curI = i
+			local s = vars[i]
+			cur = s
+
+			if not (s and s.Parent) then
+				cur = nil
+				return
+			end
+
+			pcall(function()
+				s:Stop()
+				s.TimePosition = 0
+				s.Volume = 0
+				s:Play()
+			end)
+
+			twVol(s, MAXV, 0.45)
+
+			con = s.Ended:Connect(function()
+				if tok ~= my then
+					return
+				end
+				if main.Parent and not isPlay(main) then
+					playRand()
+				else
+					cur = nil
+				end
+			end)
+		end
+
+		task.spawn(function()
+			while main.Parent do
+				if isPlay(main) then
+					tok += 1
+					clearEnded()
+
+					if cur then
+						local s = cur
+						cur = nil
+						stopFade(s, FADE)
+					end
+
+					repeat
+						task.wait(0.1)
+					until not (main.Parent and isPlay(main))
+				else
+					if not (cur and cur.Parent and isPlay(cur)) then
+						playRand()
+					end
+					task.wait(0.05)
+				end
+			end
+
+			tok += 1
+			clearEnded()
+			if cur then
+				stopFade(cur, 0.25)
+			end
+		end)
+	end
 end
 
-print("Dynamic aimbot loaded – automatically finds kill remote and weapon")
+local gi
+do
+	local mod = TSFolder and safeReq(TSFolder:FindFirstChild("GameInfo"))
+	if mod and mod.GameInfo then
+		gi = mod.GameInfo
+	end
+end
+
+local br
+do
+	local bf = TSFolder and TSFolder:FindFirstChild("BallReplicator")
+	local mod = bf and safeReq(bf:FindFirstChild("BallReplicator"))
+	if mod and mod.BallReplicator then
+		br = mod.BallReplicator
+	end
+end
+
+local cfg = {
+	spam = false,
+	vis = true,
+	fx = true
+}
+
+local white = Color3.fromRGB(255, 255, 255)
+local red = Color3.fromRGB(255, 0, 0)
+local softRed = Color3.fromRGB(255, 60, 60)
+local green = Color3.fromRGB(60, 255, 120)
+local yellow = Color3.fromRGB(255, 200, 60)
+
+local simConn
+local spamConn
+local spamAcc = 0
+local spamLast = 0
+local spamStep = 1 / 64
+local spamBurst = 8
+local ancConn
+local charConn
+local fxConn
+local ring
+local mob
+local syncIcon = false
+local bindId = 0
+local dead = false
+
+local delMap = {
+	ballhit = true,
+	slasheffect = true
+}
+
+local function disc(c)
+	if c then
+		c:Disconnect()
+	end
+	return nil
+end
+
+local function kill(o)
+	if o then
+		pcall(function()
+			o:Destroy()
+		end)
+	end
+	return nil
+end
+
+local function getBall()
+	local bm = gi and gi.BallModel
+	if bm and bm.Parent then
+		return bm
+	end
+	return WS:FindFirstChild("GameBall", true) or WS:FindFirstChild("GameBall")
+end
+
+local function tgtOn(ch)
+	if ch and ch:FindFirstChild("Highlight") then
+		return true
+	end
+
+	local t = WS:GetAttribute("GameBallTarget")
+	if t == lp.UserId then
+		return true
+	end
+
+	local sd = br and br.syncData
+	if sd and sd.HighlightTargetPlayerID == lp.UserId then
+		return true
+	end
+
+	return false
+end
+
+local function setRingOn(v)
+	if ring and ring.Parent then
+		ring.Transparency = v and 0.5 or 1
+	end
+end
+
+local function updIcons()
+	if not mob then
+		return
+	end
+
+	syncIcon = true
+
+	if mob.spam then
+		mob.spam:setLabel(cfg.spam and "Spam: ON" or "Spam: OFF")
+		if cfg.spam then
+			mob.spam:select("Sync", mob.spam)
+		else
+			mob.spam:deselect("Sync", mob.spam)
+		end
+	end
+
+	if mob.vis then
+		mob.vis:setLabel(cfg.vis and "Visualizer: ON" or "Visualizer: OFF")
+		if cfg.vis then
+			mob.vis:select("Sync", mob.vis)
+		else
+			mob.vis:deselect("Sync", mob.vis)
+		end
+	end
+
+	if mob.fx then
+		mob.fx:setLabel(cfg.fx and "FX Clean: ON" or "FX Clean: OFF")
+		if cfg.fx then
+			mob.fx:select("Sync", mob.fx)
+		else
+			mob.fx:deselect("Sync", mob.fx)
+		end
+	end
+
+	setRingOn(cfg.vis)
+
+	syncIcon = false
+end
+
+local function runSpam(dt)
+	if not cfg.spam then
+		return
+	end
+
+	local now = os.clock()
+	local add = 0
+	if spamLast > 0 then
+		add = now - spamLast
+	elseif type(dt) == "number" and dt > 0 then
+		add = dt
+	end
+	spamLast = now
+
+	if type(dt) == "number" and dt > add and dt < 0.25 then
+		add = dt
+	end
+
+	if add < 0 then
+		add = 0
+	elseif add > spamStep * spamBurst then
+		add = spamStep * spamBurst
+	end
+
+	spamAcc = math.min(spamAcc + add, spamStep * spamBurst)
+	local sent = 0
+	while spamAcc >= spamStep and sent < spamBurst do
+		spamAcc -= spamStep
+		sent += 1
+		sendParry()
+	end
+end
+
+local function setSpam(v)
+	if cfg.spam == v then
+		updIcons()
+		return
+	end
+
+	cfg.spam = v
+
+	if cfg.spam then
+		spamAcc = spamStep
+		spamLast = os.clock()
+		if not spamConn then
+			local sig = spamSig()
+			if sig then
+				spamConn = sig:Connect(function(dt)
+					runSpam(dt)
+				end)
+			end
+		end
+	else
+		spamConn = disc(spamConn)
+		spamAcc = 0
+		spamLast = 0
+	end
+
+	updIcons()
+end
+
+local function setVis(v)
+	cfg.vis = v and true or false
+	setRingOn(cfg.vis)
+	updIcons()
+end
+
+local function setFx(v)
+	cfg.fx = v and true or false
+	updIcons()
+end
+
+local function clearBind()
+	bindId += 1
+	simConn = disc(simConn)
+	ancConn = disc(ancConn)
+	ring = kill(ring)
+end
+
+local function makeRing()
+	local p = Instance.new("Part")
+	p.Name = "__ltseverydayyou__VISUALIZER__"
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanTouch = false
+	p.CanQuery = false
+	p.CastShadow = false
+	p.Material = Enum.Material.ForceField
+	p.Transparency = cfg.vis and 0.5 or 1
+	p.Color = white
+	p.Shape = Enum.PartType.Ball
+	p.Size = Vector3.new(10, 10, 10)
+	p.Parent = WS
+	return p
+end
+
+local function bind(ch)
+	clearBind()
+
+	if dead or not (ch and ch.Parent) then
+		return
+	end
+
+	local myId = bindId
+	local hrp = ch:FindFirstChild("HumanoidRootPart") or ch:WaitForChild("HumanoidRootPart", 9e9)
+	if myId ~= bindId or not (hrp and hrp.Parent) then
+		return
+	end
+
+	ring = makeRing()
+
+	local lastPos
+	local lastT
+	local vel = Vector3.zero
+	local tau = 0.05
+	local minR = 9
+	local maxR = 90
+	local cd = 0.3
+	local lastFire = 0
+	local flashT = 0
+
+	local ball
+	local ballAt = 0
+	local ballCd = 0.03
+
+	local sig = stepSig()
+	if not sig then
+		return
+	end
+
+	simConn = sig:Connect(function(dt)
+		if dead or myId ~= bindId then
+			return
+		end
+
+		if not (ch.Parent and hrp.Parent and ring and ring.Parent) then
+			clearBind()
+			return
+		end
+
+		local now = os.clock()
+
+		if not (ball and ball.Parent) or now - ballAt >= ballCd then
+			ball = getBall()
+			ballAt = now
+		end
+
+		if not (ball and ball.Parent) then
+			ring.Color = cfg.spam and red or white
+			ring.CFrame = CFrame.new(hrp.Position)
+			return
+		end
+
+		local bp = ball.Position
+		local raw
+		local okVel, av = pcall(function()
+			return ball.AssemblyLinearVelocity
+		end)
+
+		if okVel and typeof(av) == "Vector3" and av.Magnitude > 0.1 then
+			raw = av
+			vel = av
+			lastPos = bp
+			lastT = now
+		else
+			if lastPos and lastT then
+				local dtt = now - lastT
+				if dtt > 0 then
+					raw = (bp - lastPos) / dtt
+					local a = dt / (tau + dt)
+					vel = vel + (raw - vel) * a
+				end
+			end
+			lastPos = bp
+			lastT = now
+		end
+
+		local hrpPos = hrp.Position
+		local spd = vel.Magnitude
+		local rad = spd * 0.32 + 6
+
+		if rad < minR then
+			rad = minR
+		elseif rad > maxR then
+			rad = maxR
+		end
+
+		local parryRad = rad + 8
+		ring.Size = Vector3.new(rad * 2, rad * 2, rad * 2)
+		ring.CFrame = CFrame.new(hrpPos)
+
+		local off = hrpPos - bp
+		local d = off.Magnitude
+		local app = vel:Dot(off) > 0
+		local ok = tgtOn(ch)
+
+		local tImp = 1e6
+		if spd > 1 then
+			tImp = d / spd
+		end
+
+		local can = ok and app and spd > 5 and d <= parryRad and tImp <= 0.35
+
+		if cfg.spam then
+			ring.Color = red
+		elseif now - flashT <= 0.12 then
+			ring.Color = softRed
+		elseif not ok then
+			ring.Color = white
+		elseif d <= rad then
+			ring.Color = green
+		else
+			ring.Color = yellow
+		end
+
+		if can and now - lastFire >= cd then
+			lastFire = now
+			flashT = now
+			task.defer(sendParry)
+		end
+	end)
+
+	ancConn = ch.AncestryChanged:Connect(function(_, p)
+		if not p then
+			clearBind()
+		end
+	end)
+end
+
+if UIS then
+	UIS.InputBegan:Connect(function(inp, gpe)
+		if gpe then
+			return
+		end
+
+		local kc = inp.KeyCode
+		if kc == Enum.KeyCode.X then
+			setSpam(not cfg.spam)
+		elseif kc == Enum.KeyCode.Z then
+			setVis(not cfg.vis)
+		elseif kc == Enum.KeyCode.C then
+			setFx(not cfg.fx)
+		end
+	end)
+end
+
+task.spawn(function()
+	local ok, Icon = pcall(function()
+		return (loadstring(game:HttpGet("https://raw.githubusercontent.com/ltseverydayyou/uuuuuuu/refs/heads/main/Icon.luau")))()
+	end)
+
+	if not ok or not Icon then
+		warn("Failed to load topbar icons")
+		return
+	end
+
+	local root = Icon.new()
+		:setName("AEXRoot")
+		:setLabel("Auto Parry")
+		:align("Right")
+		:autoDeselect(false)
+
+	local spam = Icon.new()
+		:setName("ParrySpam")
+		:setLabel("Spam: OFF")
+		:autoDeselect(false)
+
+	local vis = Icon.new()
+		:setName("ParryVis")
+		:setLabel("Visualizer: ON")
+		:autoDeselect(false)
+
+	local fx = Icon.new()
+		:setName("ParryFx")
+		:setLabel("FX Clean: ON")
+		:autoDeselect(false)
+
+	root:setMenu({
+		spam,
+		vis,
+		fx
+	})
+
+	local c1 = spam.selected:Connect(function()
+		if syncIcon then
+			return
+		end
+		setSpam(true)
+	end)
+
+	local c2 = spam.deselected:Connect(function()
+		if syncIcon then
+			return
+		end
+		setSpam(false)
+	end)
+
+	local c3 = vis.selected:Connect(function()
+		if syncIcon then
+			return
+		end
+		setVis(true)
+	end)
+
+	local c4 = vis.deselected:Connect(function()
+		if syncIcon then
+			return
+		end
+		setVis(false)
+	end)
+
+	local c5 = fx.selected:Connect(function()
+		if syncIcon then
+			return
+		end
+		setFx(true)
+	end)
+
+	local c6 = fx.deselected:Connect(function()
+		if syncIcon then
+			return
+		end
+		setFx(false)
+	end)
+
+	if root.addToJanitor then
+		root:addToJanitor(c1)
+		root:addToJanitor(c2)
+		root:addToJanitor(c3)
+		root:addToJanitor(c4)
+		root:addToJanitor(c5)
+		root:addToJanitor(c6)
+
+		root:addToJanitor(function()
+			dead = true
+			clearBind()
+			spamConn = disc(spamConn)
+			charConn = disc(charConn)
+			fxConn = disc(fxConn)
+		end)
+	end
+
+	mob = {
+		root = root,
+		spam = spam,
+		vis = vis,
+		fx = fx
+	}
+
+	updIcons()
+end)
+
+charConn = lp.CharacterAdded:Connect(function(ch)
+	task.defer(bind, ch)
+end)
+
+if lp.Character then
+	task.defer(bind, lp.Character)
+end
+
+do
+	local function chk(inst)
+		if dead or not cfg.fx then
+			return
+		end
+
+		if not inst or not inst.Parent then
+			return
+		end
+
+		if not inst:IsDescendantOf(WS) then
+			return
+		end
+
+		local n = inst.Name
+		if type(n) ~= "string" or n == "" then
+			return
+		end
+
+		local l = n:lower()
+		if delMap[l] or l:find("ballhit", 1, true) or l:find("slasheffect", 1, true) then
+			pcall(function()
+				inst:Destroy()
+			end)
+		end
+	end
+
+	for _, d in WS:GetDescendants() do
+		task.defer(chk, d)
+	end
+
+fxConn = WS.DescendantAdded:Connect(function(inst)
+		task.defer(chk, inst)
+	end)
+end
+
+cleanup = function()
+	dead = true
+	clearBind()
+	spamConn = disc(spamConn)
+	charConn = disc(charConn)
+	fxConn = disc(fxConn)
+	if mob and mob.root and type(mob.root.destroy) == "function" then
+		pcall(function()
+			mob.root:destroy()
+		end)
+	end
+	gEnv.__na_aex = nil
+	gEnv.__na_aex_cleanup = nil
+end
+
+gEnv.__na_aex_cleanup = cleanup
