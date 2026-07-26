@@ -1,1359 +1,479 @@
-local gEnv
-
-do
-	local ok, env = pcall(function()
-		if type(getgenv) == "function" then
-			return getgenv()
-		end
-	end)
-	gEnv = ok and type(env) == "table" and env or _G
-	if type(gEnv) ~= "table" then
-		gEnv = {}
-	end
-end
-
-local function safeSvc(name, cr)
-	local ok, svc = pcall(function()
-		return game:GetService(name)
-	end)
-	if not ok or not svc then
-		return nil
-	end
-
-	local fn = type(cr) == "function" and cr or (type(cloneref) == "function" and cloneref or nil)
-	if fn then
-		local okRef, ref = pcall(fn, svc)
-		if okRef and ref then
-			return ref
-		end
-	end
-
-	return svc
-end
-
-local function safeCM(root, method, ...)
-	local obj = root
-	if type(root) == "string" then
-		obj = safeSvc(root)
-	end
-	if typeof(obj) ~= "Instance" then
-		return nil
-	end
-
-	local fn = obj[method]
-	if type(fn) ~= "function" then
-		return nil
-	end
-
-	local ok, res = pcall(fn, obj, ...)
-	if ok then
-		return res
-	end
-	return nil
-end
-
-local __lt = (function()
-	local globalEnv = gEnv or _G or {}
-	local sharedEnv = type(_G) == "table" and rawget(_G, "shared") or nil
-	local cacheHost = type(sharedEnv) == "table" and sharedEnv or (type(globalEnv) == "table" and globalEnv or nil)
-	if cacheHost then
-		local cached = rawget(cacheHost, "__lt_service_resolver")
-		if type(cached) == "table" then
-			if type(cached.cs) ~= "function" then
-				cached.cs = safeSvc
-			end
-			if type(cached.cm) ~= "function" then
-				cached.cm = safeCM
-			end
-			return cached
-		end
-	end
-
-	local loaded
-	local loader = loadstring or load
-	if type(loader) == "function" then
-		local okSrc, src = pcall(function()
-			return game:HttpGet("https://ltseverydayyou.github.io/ServiceResolver.luau")
-		end)
-		if okSrc and type(src) == "string" and src ~= "" then
-			local okCompile, resolver = pcall(function()
-				return loader(src, "@ServiceResolver.luau")
-			end)
-			if okCompile and type(resolver) == "function" then
-				local okLoad, got = pcall(resolver)
-				if okLoad and type(got) == "table" then
-					loaded = got
-				end
-			end
-		end
-	end
-
-	if type(loaded) ~= "table" then
-		loaded = {}
-	end
-	if type(loaded.cs) ~= "function" then
-		loaded.cs = safeSvc
-	end
-	if type(loaded.cm) ~= "function" then
-		loaded.cm = safeCM
-	end
-
-	if cacheHost then
-		cacheHost.__lt_service_resolver = loaded
-	end
-
-	return loaded
-end)()
-
-local function safeReq(mod)
-	if typeof(mod) ~= "Instance" or not mod.Parent or not mod:IsA("ModuleScript") then
-		return nil
-	end
-	if type(require) ~= "function" then
-		return nil
-	end
-	local ok, res = pcall(require, mod)
-	if ok then
-		return res
-	end
-	return nil
-end
-
-local function waitChild(parent, name, tm)
-	if typeof(parent) ~= "Instance" then
-		return nil
-	end
-	return parent:FindFirstChild(name) or parent:WaitForChild(name, tm or 10)
-end
-
-local function stepSig()
-	local r = safeSvc("RunService")
-	return r and (r.PostSimulation or r.Heartbeat)
-end
-
-local function spamSig()
-	local r = safeSvc("RunService")
-	return r and (r.PostSimulation or r.Heartbeat)
-end
-
-if type(gEnv.__na_aex_cleanup) == "function" then
-	pcall(gEnv.__na_aex_cleanup)
-end
-gEnv.__na_aex = true
-gEnv.__na_aex_cleanup = nil
-
-if game.GameId ~= 4538598064 then
-	return
-end
-
-local cref = type(cloneref) == "function" and cloneref or nil
-local Plrs = __lt.cs("Players", cref)
-local Run = __lt.cs("RunService", cref)
-local SS = __lt.cs("SoundService", cref)
-local TS = __lt.cs("TweenService", cref)
-local RSrv = __lt.cs("ReplicatedStorage", cref)
-local UIS = __lt.cs("UserInputService", cref)
-local SG = __lt.cs("StarterGui", cref)
-local WS = workspace
-
-local lp = Plrs and Plrs.LocalPlayer
-if not lp then
-	gEnv.__na_aex = nil
-	return
-end
-
-local TSFolder = waitChild(RSrv, "TS", 10)
-local Remotes = waitChild(RSrv, "Remotes", 10)
-local GenRemotes = TSFolder and TSFolder:FindFirstChild("GeneratedNetworkRemotes")
-local BallSyncRemote = Remotes and Remotes:FindFirstChild("BallSyncData")
-
-local bmMod = TSFolder and safeReq(TSFolder:FindFirstChild("BindableManager"))
-local BM = bmMod and bmMod.BindableManager or nil
-local enumFolder = TSFolder and TSFolder:FindFirstChild("Enums")
-local abMod = enumFolder and safeReq(enumFolder:FindFirstChild("AbilityID"))
-local AbilityID = abMod and abMod.AbilityID or { Deflect = "Deflect" }
-local abilFolder = TSFolder and TSFolder:FindFirstChild("Abilities")
-local defMod = abilFolder and safeReq(abilFolder:FindFirstChild("DeflectAbility"))
-local Def = defMod and defMod.DeflectAbility or {}
-local PNotif = __lt.cm("ReplicatedStorage", "FindFirstChild", "PromptNotification")
-
-local function refreshRefs()
-	if not RSrv then
-		return
-	end
-	if not (TSFolder and TSFolder.Parent) then
-		TSFolder = RSrv:FindFirstChild("TS")
-	end
-	if not (Remotes and Remotes.Parent) then
-		Remotes = RSrv:FindFirstChild("Remotes")
-	end
-	if TSFolder and not (GenRemotes and GenRemotes.Parent) then
-		GenRemotes = TSFolder:FindFirstChild("GeneratedNetworkRemotes")
-	end
-	if Remotes and not (BallSyncRemote and BallSyncRemote.Parent) then
-		BallSyncRemote = Remotes:FindFirstChild("BallSyncData")
-	end
-end
-
-local oAvail
-if type(hookfunction) == "function" and type(Def.IsAvailable) == "function" then
-	pcall(function()
-		oAvail = hookfunction(Def.IsAvailable, function(self, ...)
-			return true
-		end)
-	end)
-end
-if not oAvail and type(Def) == "table" and type(Def.IsAvailable) == "function" then
-	pcall(function()
-		Def.IsAvailable = function(self, ...)
-			return true
-		end
-	end)
-end
-
-local cleanup
-local notify
-local parryRemote
-local parryMode
-local parryInitDone = false
-local parryRemoteLocked = false
-local cooldownFrame
-local probingRemote = false
-
-local function getCooldownFrame()
-	if cooldownFrame and cooldownFrame.Parent then
-		return cooldownFrame
-	end
-
-	local pg = lp:FindFirstChild("PlayerGui")
-	if not pg then
-		return nil
-	end
-
-	local ok, frame = pcall(function()
-		return (((((pg:WaitForChild("Interface", 1)):WaitForChild("HUD", 1)):WaitForChild("Bottom", 1)):WaitForChild("Deflect", 1)):WaitForChild("Button", 1)):WaitForChild("CooldownClipping", 1):WaitForChild("Cooldown", 1)
-	end)
-	if ok and frame then
-		cooldownFrame = frame
-		return cooldownFrame
-	end
-	return nil
-end
-
-local function sameSize(a, b)
-	return a
-		and b
-		and a.X.Scale == b.X.Scale
-		and a.X.Offset == b.X.Offset
-		and a.Y.Scale == b.Y.Scale
-		and a.Y.Offset == b.Y.Offset
-end
-
-local function validRemote(remote)
-	return typeof(remote) == "Instance" and remote.Parent ~= nil and remote:IsA("RemoteEvent")
-end
-
-local gameEnv
-local gameG
-
-local function getGameGlobal()
-	if type(gameG) == "table" then
-		return gameG, gameEnv
-	end
-
-	if type(getfenv) == "function" then
-		local fns = {}
-		if type(Def) == "table" then
-			fns[#fns + 1] = Def.Deflect
-			fns[#fns + 1] = Def.OnClientCreate
-			fns[#fns + 1] = Def.OnServerCreate
-			fns[#fns + 1] = Def.constructor
-		end
-
-		for i = 1, #fns do
-			local fn = fns[i]
-			if type(fn) == "function" then
-				local ok, env = pcall(getfenv, fn)
-				if ok and type(env) == "table" then
-					gameEnv = env
-					local g = rawget(env, "_G")
-					gameG = type(g) == "table" and g or env
-					return gameG, gameEnv
-				end
-			end
-		end
-	end
-
-	gameEnv = type(_G) == "table" and _G or {}
-	gameG = gameEnv
-	return gameG, gameEnv
-end
-
-local function getGameDid()
-	local g, env = getGameGlobal()
-	local did = type(g) == "table" and rawget(g, "did") or nil
-	if validRemote(did) then
-		return did
-	end
-
-	did = type(env) == "table" and rawget(env, "did") or nil
-	if validRemote(did) then
-		return did
-	end
-
-	return nil
-end
-
-local function setGameDid(remote)
-	local g, env = getGameGlobal()
-	if type(g) == "table" then
-		rawset(g, "did", remote)
-	end
-	if type(env) == "table" and env ~= g and rawget(env, "_G") == nil then
-		rawset(env, "did", remote)
-	end
-end
-
-local function cacheParryRemote(remote, mode, locked)
-	if not validRemote(remote) then
-		return nil
-	end
-
-	parryRemote = remote
-	parryMode = mode
-
-	if locked ~= nil then
-		parryRemoteLocked = locked and true or false
-	end
-
-	if mode == "buffer" then
-		setGameDid(remote)
-	end
-
-	return parryRemote, parryMode
-end
-
-local function getGeneratedRemote(id)
-	refreshRefs()
-	if not TSFolder then
-		return nil
-	end
-	if not (GenRemotes and GenRemotes.Parent) then
-		GenRemotes = TSFolder:FindFirstChild("GeneratedNetworkRemotes")
-	end
-
-	if not GenRemotes then
-		return nil
-	end
-
-	local remote = GenRemotes:FindFirstChild("RE_" .. tostring(id))
-	if validRemote(remote) then
-		return remote
-	end
-
-	return nil
-end
-
-local function resolveParryRemote()
-	refreshRefs()
-	if parryRemoteLocked then
-		if validRemote(parryRemote) then
-			return parryRemote, parryMode
-		end
-		return nil
-	end
-
-	if validRemote(parryRemote) then
-		return parryRemote, parryMode
-	end
-
-	local globalDid = getGameDid()
-	if validRemote(globalDid) then
-		return cacheParryRemote(globalDid, "buffer")
-	end
-
-	local byName = Remotes and Remotes:FindFirstChild("pr_" .. tostring(lp.UserId))
-	if validRemote(byName) then
-		return cacheParryRemote(byName, "buffer")
-	end
-
-	local generated = getGeneratedRemote(1)
-	if validRemote(generated) then
-		return cacheParryRemote(generated, "event")
-	end
-
-	return nil
-end
-
-local function makeDeflectBuffer(flag)
-	if type(buffer) == "table" and type(buffer.fromstring) == "function" then
-		if flag == 2 then
-			return buffer.fromstring("\2")
-		end
-		return buffer.fromstring("\1")
-	end
-	if type(buffer) == "table" and type(buffer.create) == "function" and type(buffer.writeu8) == "function" then
-		local payload = buffer.create(1)
-		buffer.writeu8(payload, 0, flag)
-		return payload
-	end
-	return nil
-end
-
-local function ensureParryInitialized()
-	if parryInitDone then
-		return true
-	end
-
-	local remote, mode = resolveParryRemote()
-	if not remote then
-		return false
-	end
-
-	if mode == "event" then
-		parryInitDone = true
-		return true
-	end
-
-	local payload = makeDeflectBuffer(2)
-	if not payload then
-		return false
-	end
-
-	local ok = pcall(function()
-		remote:FireServer(payload)
-	end)
-	if ok then
-		parryInitDone = true
-	end
-	return ok
-end
-
-local function probeNamedRemoteEvents()
-	refreshRefs()
-	if probingRemote or not Remotes then
-		return nil
-	end
-
-	local cd = getCooldownFrame()
-	local payloadInit = makeDeflectBuffer(2)
-	local payloadFire = makeDeflectBuffer(1)
-	if not (cd and payloadInit and payloadFire) then
-		return nil
-	end
-
-	probingRemote = true
-	local baseline = cd.Size
-
-	local candidates = {}
-	local direct = Remotes:FindFirstChild("pr_" .. tostring(lp.UserId))
-	if typeof(direct) == "Instance" and type(direct.FireServer) == "function" then
-		candidates[#candidates + 1] = direct
-	end
-	for _, remote in Remotes:GetChildren() do
-		if remote.Name == "RemoteEvent" and typeof(remote) == "Instance" and type(remote.FireServer) == "function" then
-			candidates[#candidates + 1] = remote
-		end
-	end
-
-	for i = 1, #candidates do
-		local remote = candidates[i]
-		if remote and remote.Parent then
-			pcall(function()
-				remote:FireServer(payloadInit)
-			end)
-			task.wait(0.03)
-			pcall(function()
-				remote:FireServer(payloadFire)
-			end)
-			task.wait(0.08)
-
-			local sz = cd.Size
-			local changed = not sameSize(sz, baseline)
-			if changed then
-				cacheParryRemote(remote, "buffer", true)
-				parryInitDone = true
-				notify("Parry remote found: " .. remote.Name, true)
-				probingRemote = false
-				return parryRemote, parryMode
-			end
-		end
-	end
-
-	probingRemote = false
-	return nil
-end
-
-local function getDeflectAbility()
-	if not BM or not AbilityID or AbilityID.Deflect == nil then
-		return nil
-	end
-
-	local okFn, fn = pcall(function()
-		return BM:GetFunction("AbilityManager::GetAbility")
-	end)
-	if not okFn or not fn then
-		return nil
-	end
-
-	local okAbility, ability = pcall(function()
-		return fn:Invoke(AbilityID.Deflect)
-	end)
-	if okAbility and type(ability) == "table" then
-		return ability
-	end
-	return nil
-end
-
-function notify(txt, okv)
-	task.defer(function()
-		if PNotif then
-			local ok = pcall(function()
-				PNotif:Fire(txt, okv)
-			end)
-			if ok then
-				return
-			end
-		end
-		if SG then
-			pcall(function()
-				SG:SetCore("SendNotification", {
-					Title = "Nameless Admin",
-					Text = tostring(txt),
-					Duration = 4
-				})
-			end)
-		end
-	end)
-end
-
-local function fireParryRemote(remote, mode, flag)
-	if not validRemote(remote) then
-		return false
-	end
-
-	if mode == "event" then
-		local ok = pcall(function()
-			remote:FireServer()
-		end)
-		return ok
-	end
-
-	local payload = makeDeflectBuffer(flag or 1)
-	if not payload then
-		return false
-	end
-
-	ensureParryInitialized()
-
-	local ok = pcall(function()
-		remote:FireServer(payload)
-	end)
-	return ok
-end
-
-local function sendParry()
-	local remote, mode = resolveParryRemote()
-	if remote and fireParryRemote(remote, mode, 1) then
-		return
-	end
-
-	local ability = getDeflectAbility()
-	if ability then
-		local did = rawget(ability, "did")
-		if validRemote(did) and fireParryRemote((cacheParryRemote(did, "buffer")), "buffer", 1) then
-			return
-		end
-	end
-
-	remote, mode = probeNamedRemoteEvents()
-	if remote and fireParryRemote(remote, mode, 1) then
-		return
-	end
-
-	if ability and type(ability.Deflect) == "function" and validRemote(getGameDid()) then
-		pcall(function()
-			ability:Deflect()
-		end)
-	end
-end
-
-notify("super scuffed autoparry loaded 💀💀💀", true)
-task.defer(function()
-	local found, mode = resolveParryRemote()
-	if found then
-		ensureParryInitialized()
-		notify("Parry remote detected successfully: " .. tostring(mode), true)
-		return
-	end
-
-	found, mode = probeNamedRemoteEvents()
-	if found then
-		notify("Parry remote detected successfully: " .. tostring(mode), true)
-	else
-		ensureParryInitialized()
-	end
-end)
-
-do
-	local mas = __lt.cm("SoundService", "FindFirstChild", "Master")
-	local mus = mas and mas:FindFirstChild("Music")
-	local gam = mus and mus:FindFirstChild("Game")
-	local lob = mus and mus:FindFirstChild("Lobby")
-	local main = lob and lob:FindFirstChild("Main")
-
-	if mus and gam and main then
-		for _, v in gam:GetChildren() do
-			if v:IsA("Sound") then
-				pcall(function()
-					v:Destroy()
-				end)
-			end
-		end
-
-		local ids = {
-			"rbxassetid://15448175657",
-			"rbxassetid://15448189246",
-			"rbxassetid://15492387259",
-			"rbxassetid://15492384385",
-			"rbxassetid://15619382428",
-			"rbxassetid://15619385373",
-			"rbxassetid://15933457903"
-		}
-
-		local spd = {1, 1.1, 1, 1, 1, 1, 1}
-		local MAXV = 1
-		local FADE = 0.35
-		local vars = table.create(#ids)
-
-		for i = 1, #ids do
-			local s = Instance.new("Sound")
-			s.Name = "Variant" .. i
-			s.SoundId = ids[i]
-			s.SoundGroup = mus
-			s.Looped = false
-			s.RollOffMode = Enum.RollOffMode.InverseTapered
-			s.PlaybackSpeed = spd[i]
-			pcall(function()
-				s.Pitch = spd[i]
-			end)
-			s.Volume = 0
-			s.Parent = gam
-			vars[i] = s
-		end
-
-		local function isPlay(s)
-			if not s or not s.Parent then
-				return false
-			end
-			local ok, v = pcall(function()
-				return s.IsPlaying
-			end)
-			if ok then
-				return v
-			end
-			ok, v = pcall(function()
-				return s.Playing
-			end)
-			return ok and v or false
-		end
-
-		local tws = {}
-
-		local function twVol(s, v, t)
-			if not (s and s.Parent) then
-				return
-			end
-
-			local old = tws[s]
-			if old then
-				pcall(function()
-					old:Cancel()
-				end)
-			end
-
-			local ok, tw = pcall(function()
-				return TS:Create(s, TweenInfo.new(t, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-					Volume = v
-				})
-			end)
-
-			if ok and tw then
-				tws[s] = tw
-				tw.Completed:Once(function()
-					if tws[s] == tw then
-						tws[s] = nil
-					end
-				end)
-				tw:Play()
-			else
-				pcall(function()
-					s.Volume = v
-				end)
-			end
-		end
-
-		local function stopFade(s, t)
-			if not (s and s.Parent) then
-				return
-			end
-			twVol(s, 0, t)
-			task.delay(t, function()
-				if not (s and s.Parent) then
-					return
-				end
-				pcall(function()
-					s:Stop()
-				end)
-				pcall(function()
-					s.Volume = 0
-				end)
-			end)
-		end
-
-		local rng = Random.new()
-		local cur, curI, con, tok = nil, nil, nil, 0
-
-		local function clearEnded()
-			if con then
-				con:Disconnect()
-				con = nil
-			end
-		end
-
-		local function pickNext(lastI)
-			if #vars <= 1 then
-				return 1
-			end
-			local i
-			repeat
-				i = rng:NextInteger(1, #vars)
-			until i ~= lastI
-			return i
-		end
-
-		local function playRand()
-			tok += 1
-			local my = tok
-			clearEnded()
-
-			local i = pickNext(curI)
-			curI = i
-			local s = vars[i]
-			cur = s
-
-			if not (s and s.Parent) then
-				cur = nil
-				return
-			end
-
-			pcall(function()
-				s:Stop()
-				s.TimePosition = 0
-				s.Volume = 0
-				s:Play()
-			end)
-
-			twVol(s, MAXV, 0.45)
-
-			con = s.Ended:Connect(function()
-				if tok ~= my then
-					return
-				end
-				if main.Parent and not isPlay(main) then
-					playRand()
-				else
-					cur = nil
-				end
-			end)
-		end
-
-		task.spawn(function()
-			while main.Parent do
-				if isPlay(main) then
-					tok += 1
-					clearEnded()
-
-					if cur then
-						local s = cur
-						cur = nil
-						stopFade(s, FADE)
-					end
-
-					repeat
-						task.wait(0.1)
-					until not (main.Parent and isPlay(main))
-				else
-					if not (cur and cur.Parent and isPlay(cur)) then
-						playRand()
-					end
-					task.wait(0.05)
-				end
-			end
-
-			tok += 1
-			clearEnded()
-			if cur then
-				stopFade(cur, 0.25)
-			end
-		end)
-	end
-end
-
-local gi
-do
-	local mod = TSFolder and safeReq(TSFolder:FindFirstChild("GameInfo"))
-	if mod and mod.GameInfo then
-		gi = mod.GameInfo
-	end
-end
-
-local br
-do
-	local bf = TSFolder and TSFolder:FindFirstChild("BallReplicator")
-	local mod = bf and safeReq(bf:FindFirstChild("BallReplicator"))
-	if mod and mod.BallReplicator then
-		br = mod.BallReplicator
-	end
-end
-
-local cfg = {
-	spam = false,
-	vis = true,
-	fx = true
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local Remote = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packet"):WaitForChild("RemoteEvent")
+
+local WindUI = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
+))()
+
+local Settings = {
+    AutoRoll = false,
+    AutoLuck = false,
+    AutoBuyLuck = false,
+    AutoBuyUltra = false,
+    AutoBuyCash = false,
+    AutoBuySpeed = false,
+    AutoUseLuck = false,
+    AutoUseUltra = false,
+    AutoUseCash = false,
+    AutoUseSpeed = false,
+    AutoOpenEggs = false,
+    AutoLuckUseLuck = true,
+    AutoLuckUseUltra = true,
+    AutoLuckUseCash = true,
+    AutoLuckUseSpeed = true,
+    AutoLuckTimes = 2,
 }
 
-local white = Color3.fromRGB(255, 255, 255)
-local red = Color3.fromRGB(255, 0, 0)
-local softRed = Color3.fromRGB(255, 60, 60)
-local green = Color3.fromRGB(60, 255, 120)
-local yellow = Color3.fromRGB(255, 200, 60)
+local lastTeleportTime = 0
+local TELEPORT_COOLDOWN = 180
 
-local simConn
-local spamConn
-local spamAcc = 0
-local spamLast = 0
--- 🔥 MODIFIED: 64 Hz with burst 8 (aggressive but smooth)
-local spamStep = 1 / 64
-local spamBurst = 8
-local ancConn
-local charConn
-local fxConn
-local ring
-local mob
-local syncIcon = false
-local bindId = 0
-local dead = false
+local function BuildUseBuffer(byte2, potionName)
+    local bytes = {12, byte2}
+    for i = 1, #potionName do table.insert(bytes, string.byte(potionName, i)) end
+    local buf = buffer.create(#bytes)
+    for i = 1, #bytes do buffer.writeu8(buf, i - 1, bytes[i]) end
+    return buf
+end
 
-local delMap = {
-	ballhit = true,
-	slasheffect = true
+local function BuildBuyBuffer(byte2, potionName, repeatCount)
+    local bytes = {}
+    for r = 1, repeatCount do
+        table.insert(bytes, 11)
+        table.insert(bytes, byte2)
+        for i = 1, #potionName do table.insert(bytes, string.byte(potionName, i)) end
+    end
+    local buf = buffer.create(#bytes)
+    for i = 1, #bytes do buffer.writeu8(buf, i - 1, bytes[i]) end
+    return buf
+end
+
+local function BuildRollBuffer()
+    local bytes = {2, 0}
+    local buf = buffer.create(#bytes)
+    for i = 1, #bytes do buffer.writeu8(buf, i - 1, bytes[i]) end
+    return buf
+end
+
+local function SafeFire(remote, data)
+    pcall(function()
+        if type(data) == "string" then
+            local buf = buffer.fromstring(data)
+            remote:FireServer(buf)
+        else
+            remote:FireServer(data)
+        end
+    end)
+end
+
+local avatarImage = Players:GetUserThumbnailAsync(
+    player.UserId,
+    Enum.ThumbnailType.HeadShot,
+    Enum.ThumbnailSize.Size150x150
+)
+
+local FloatIcon = "rbxassetid://18756790060"
+
+local Window = WindUI:CreateWindow({
+    Title  = "Gender RNG Auto Farm",
+    Icon   = avatarImage,
+    IconSize = 60,
+    Author = "FloxyCola",
+    Folder = "GenderRNG_AF",
+    Theme  = "Dark",
+    Size   = UDim2.fromOffset(580, 480),
+    MinSize = Vector2.new(560, 400),
+    Resizable = true,
+    SideBarWidth = 160,
+    OpenButton = {
+        Enabled = false,
+    },
+})
+
+----------------------------------------------------------------
+-- CUSTOM FLOATING RE-OPEN ICON
+----------------------------------------------------------------
+local FloatGui = Instance.new("ScreenGui")
+FloatGui.Name = "GenderRNGFloatingIcon"
+FloatGui.ResetOnSpawn = false
+FloatGui.IgnoreGuiInset = true
+FloatGui.DisplayOrder = 999
+FloatGui.Parent = player:WaitForChild("PlayerGui")
+
+local FloatButton = Instance.new("ImageButton")
+FloatButton.Name = "ReopenButton"
+FloatButton.Size = UDim2.fromOffset(52, 52)
+FloatButton.Position = UDim2.new(0, 20, 0.5, -26)
+FloatButton.BackgroundColor3 = Color3.fromHex("#ffffff")
+FloatButton.BackgroundTransparency = 0
+FloatButton.Image = FloatIcon
+FloatButton.ImageColor3 = Color3.fromHex("#ffffff")
+FloatButton.ScaleType = Enum.ScaleType.Crop
+FloatButton.Visible = false
+FloatButton.ZIndex = 1000
+FloatButton.Parent = FloatGui
+
+local FloatCorner = Instance.new("UICorner")
+FloatCorner.CornerRadius = UDim.new(0, 16)
+FloatCorner.Parent = FloatButton
+
+local FloatStroke = Instance.new("UIStroke")
+FloatStroke.Thickness = 1
+FloatStroke.Parent = FloatButton
+
+local FloatStrokeGradient = Instance.new("UIGradient")
+FloatStrokeGradient.Color = ColorSequence.new(
+    Color3.fromHex("#9fe0ff"),
+    Color3.fromHex("#ff9fe0")
+)
+FloatStrokeGradient.Parent = FloatStroke
+
+local dragging, dragInput, dragStart, startPos
+
+FloatButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = FloatButton.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+FloatButton.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        FloatButton.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+FloatButton.MouseButton1Click:Connect(function()
+    Window:Open()
+end)
+
+Window:OnClose(function()
+    FloatButton.Visible = true
+end)
+
+Window:OnOpen(function()
+    FloatButton.Visible = false
+end)
+----------------------------------------------------------------
+
+local GeneralTab = Window:Tab({ Title = "General", Icon = "sliders-horizontal" })
+
+GeneralTab:Toggle({
+    Title = "Auto Roll",
+    Desc = "Literally",
+    Flag = "AutoRoll",
+    Value = Settings.AutoRoll,
+    Callback = function(state)
+        Settings.AutoRoll = state
+        if state then
+            spawn(function()
+                while Settings.AutoRoll do
+                    pcall(function() SafeFire(Remote, BuildRollBuffer()) end)
+                    wait(0.1)
+                end
+            end)
+        end
+    end,
+})
+
+local BuyTab = Window:Tab({ Title = "Buy Potions", Icon = "shopping-bag" })
+
+local buyData = {
+    { "Buy Luck Potion",          11, "Luck Potion",         1 },
+    { "Buy Ultra Luck Potion",    17, "Ultra Luck Potion",   1 },
+    { "Buy Cash Potion",          11, "Cash Potion",         1 },
+    { "Buy Roll Speed Potion",    17, "Roll Speed Potion",   2 },
 }
 
-local function disc(c)
-	if c then
-		c:Disconnect()
-	end
-	return nil
+for _, data in ipairs(buyData) do
+    local flag = "AutoBuy" .. data[1]:gsub(" ", "")
+    BuyTab:Toggle({
+        Title = data[1],
+        Flag = flag,
+        Value = Settings[flag],
+        Callback = function(state)
+            Settings[flag] = state
+            if state then
+                spawn(function()
+                    while Settings[flag] do
+                        pcall(function()
+                            SafeFire(Remote, BuildBuyBuffer(data[2], data[3], data[4]))
+                        end)
+                        wait(1)
+                    end
+                end)
+            end
+        end,
+    })
 end
 
-local function kill(o)
-	if o then
-		pcall(function()
-			o:Destroy()
-		end)
-	end
-	return nil
+local UseTab = Window:Tab({ Title = "Use Potions", Icon = "flask-conical" })
+
+local useData = {
+    { "Use Luck Potion",              11, "Luck Potion",         0.1 },
+    { "Use Ultra Luck Potion",        17, "Ultra Luck Potion",   0.1 },
+    { "Use Cash Potion",              11, "Cash Potion",         0.1 },
+    { "Use Roll Speed Potion",        17, "Roll Speed Potion",   0.1 },
+}
+
+for _, data in ipairs(useData) do
+    local label = data[1]:gsub(" %(2x%)", ""):gsub(" %(5x%)", "")
+    local flag = "AutoUse" .. label:gsub(" ", "")
+    UseTab:Toggle({
+        Title = data[1],
+        Flag = flag,
+        Value = Settings[flag],
+        Callback = function(state)
+            Settings[flag] = state
+            if state then
+                spawn(function()
+                    while Settings[flag] do
+                        pcall(function()
+                            SafeFire(Remote, BuildUseBuffer(data[2], data[3]))
+                        end)
+                        wait(data[4])
+                    end
+                end)
+            end
+        end,
+    })
 end
 
--- 🔥 MODIFIED: Cached ball to stop workspace scanning stutter
-local cachedBall = nil
-local function getBall()
-	if cachedBall and cachedBall.Parent then
-		return cachedBall
-	end
-	cachedBall = WS:FindFirstChild("GameBall", true) or WS:FindFirstChild("GameBall")
-	return cachedBall
-end
-
-local function tgtOn(ch)
-	if ch and ch:FindFirstChild("Highlight") then
-		return true
-	end
-
-	local t = WS:GetAttribute("GameBallTarget")
-	if t == lp.UserId then
-		return true
-	end
-
-	local sd = br and br.syncData
-	if sd and sd.HighlightTargetPlayerID == lp.UserId then
-		return true
-	end
-
-	return false
-end
-
-local function setRingOn(v)
-	if ring and ring.Parent then
-		ring.Transparency = v and 0.5 or 1
-	end
-end
-
-local function updIcons()
-	if not mob then
-		return
-	end
-
-	syncIcon = true
-
-	if mob.spam then
-		mob.spam:setLabel(cfg.spam and "Spam: ON" or "Spam: OFF")
-		if cfg.spam then
-			mob.spam:select("Sync", mob.spam)
-		else
-			mob.spam:deselect("Sync", mob.spam)
-		end
-	end
-
-	if mob.vis then
-		mob.vis:setLabel(cfg.vis and "Visualizer: ON" or "Visualizer: OFF")
-		if cfg.vis then
-			mob.vis:select("Sync", mob.vis)
-		else
-			mob.vis:deselect("Sync", mob.vis)
-		end
-	end
-
-	if mob.fx then
-		mob.fx:setLabel(cfg.fx and "FX Clean: ON" or "FX Clean: OFF")
-		if cfg.fx then
-			mob.fx:select("Sync", mob.fx)
-		else
-			mob.fx:deselect("Sync", mob.fx)
-		end
-	end
-
-	setRingOn(cfg.vis)
-
-	syncIcon = false
-end
-
-local function runSpam(dt)
-	if not cfg.spam then
-		return
-	end
-
-	local now = os.clock()
-	local add = 0
-	if spamLast > 0 then
-		add = now - spamLast
-	elseif type(dt) == "number" and dt > 0 then
-		add = dt
-	end
-	spamLast = now
-
-	if type(dt) == "number" and dt > add and dt < 0.25 then
-		add = dt
-	end
-
-	if add < 0 then
-		add = 0
-	elseif add > spamStep * spamBurst then
-		add = spamStep * spamBurst
-	end
-
-	spamAcc = math.min(spamAcc + add, spamStep * spamBurst)
-	local sent = 0
-	while spamAcc >= spamStep and sent < spamBurst do
-		spamAcc -= spamStep
-		sent += 1
-		sendParry()
-	end
-end
-
-local function setSpam(v)
-	if cfg.spam == v then
-		updIcons()
-		return
-	end
-
-	cfg.spam = v
-
-	if cfg.spam then
-		spamAcc = spamStep
-		spamLast = os.clock()
-		if not spamConn then
-			local sig = spamSig()
-			if sig then
-				spamConn = sig:Connect(function(dt)
-					runSpam(dt)
-				end)
-			end
-		end
-	else
-		spamConn = disc(spamConn)
-		spamAcc = 0
-		spamLast = 0
-	end
-
-	updIcons()
-end
-
-local function setVis(v)
-	cfg.vis = v and true or false
-	setRingOn(cfg.vis)
-	updIcons()
-end
-
-local function setFx(v)
-	cfg.fx = v and true or false
-	updIcons()
-end
-
-local function clearBind()
-	bindId += 1
-	simConn = disc(simConn)
-	ancConn = disc(ancConn)
-	ring = kill(ring)
-end
-
-local function makeRing()
-	local p = Instance.new("Part")
-	p.Name = "__ltseverydayyou__VISUALIZER__"
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanTouch = false
-	p.CanQuery = false
-	p.CastShadow = false
-	p.Material = Enum.Material.ForceField
-	p.Transparency = cfg.vis and 0.5 or 1
-	p.Color = white
-	p.Shape = Enum.PartType.Ball
-	p.Size = Vector3.new(10, 10, 10)
-	p.Parent = WS
-	return p
-end
-
-local function bind(ch)
-	clearBind()
-
-	if dead or not (ch and ch.Parent) then
-		return
-	end
-
-	local myId = bindId
-	local hrp = ch:FindFirstChild("HumanoidRootPart") or ch:WaitForChild("HumanoidRootPart", 9e9)
-	if myId ~= bindId or not (hrp and hrp.Parent) then
-		return
-	end
-
-	ring = makeRing()
-
-	local lastPos
-	local lastT
-	local vel = Vector3.zero
-	local tau = 0.05
-	local minR = 9
-	local maxR = 90
-	local cd = 0.3
-	local lastFire = 0
-	local flashT = 0
-
-	local ball
-	local ballAt = 0
-	local ballCd = 0.03
-
-	local sig = stepSig()
-	if not sig then
-		return
-	end
-
-	simConn = sig:Connect(function(dt)
-		if dead or myId ~= bindId then
-			return
-		end
-
-		if not (ch.Parent and hrp.Parent and ring and ring.Parent) then
-			clearBind()
-			return
-		end
-
-		-- 🔥 MODIFIED: SKIP EVERYTHING if both spam AND visualizer are OFF
-		-- This completely stops the stutter!
-		if not cfg.spam and not cfg.vis then
-			return
-		end
-
-		local now = os.clock()
-
-		if not (ball and ball.Parent) or now - ballAt >= ballCd then
-			ball = getBall()
-			ballAt = now
-		end
-
-		if not (ball and ball.Parent) then
-			ring.Color = cfg.spam and red or white
-			ring.CFrame = CFrame.new(hrp.Position)
-			return
-		end
-
-		local bp = ball.Position
-		local raw
-		local okVel, av = pcall(function()
-			return ball.AssemblyLinearVelocity
-		end)
-
-		if okVel and typeof(av) == "Vector3" and av.Magnitude > 0.1 then
-			raw = av
-			vel = av
-			lastPos = bp
-			lastT = now
-		else
-			if lastPos and lastT then
-				local dtt = now - lastT
-				if dtt > 0 then
-					raw = (bp - lastPos) / dtt
-					local a = dt / (tau + dt)
-					vel = vel + (raw - vel) * a
-				end
-			end
-			lastPos = bp
-			lastT = now
-		end
-
-		local hrpPos = hrp.Position
-		local spd = vel.Magnitude
-		local rad = spd * 0.32 + 6
-
-		if rad < minR then
-			rad = minR
-		elseif rad > maxR then
-			rad = maxR
-		end
-
-		local parryRad = rad + 8
-		ring.Size = Vector3.new(rad * 2, rad * 2, rad * 2)
-		ring.CFrame = CFrame.new(hrpPos)
-
-		local off = hrpPos - bp
-		local d = off.Magnitude
-		local app = vel:Dot(off) > 0
-		local ok = tgtOn(ch)
-
-		local tImp = 1e6
-		if spd > 1 then
-			tImp = d / spd
-		end
-
-		local can = ok and app and spd > 5 and d <= parryRad and tImp <= 0.35
-
-		if cfg.spam then
-			ring.Color = red
-		elseif now - flashT <= 0.12 then
-			ring.Color = softRed
-		elseif not ok then
-			ring.Color = white
-		elseif d <= rad then
-			ring.Color = green
-		else
-			ring.Color = yellow
-		end
-
-		if can and now - lastFire >= cd then
-			lastFire = now
-			flashT = now
-			task.defer(sendParry)
-		end
-	end)
-
-	ancConn = ch.AncestryChanged:Connect(function(_, p)
-		if not p then
-			clearBind()
-		end
-	end)
-end
-
-if UIS then
-	UIS.InputBegan:Connect(function(inp, gpe)
-		if gpe then
-			return
-		end
-
-		local kc = inp.KeyCode
-		if kc == Enum.KeyCode.X then
-			setSpam(not cfg.spam)
-		elseif kc == Enum.KeyCode.Z then
-			setVis(not cfg.vis)
-		elseif kc == Enum.KeyCode.C then
-			setFx(not cfg.fx)
-		end
-	end)
-end
-
-task.spawn(function()
-	local ok, Icon = pcall(function()
-		return (loadstring(game:HttpGet("https://raw.githubusercontent.com/ltseverydayyou/uuuuuuu/refs/heads/main/Icon.luau")))()
-	end)
-
-	if not ok or not Icon then
-		warn("Failed to load topbar icons")
-		return
-	end
-
-	local root = Icon.new()
-		:setName("AEXRoot")
-		:setLabel("Auto Parry")
-		:align("Right")
-		:autoDeselect(false)
-
-	local spam = Icon.new()
-		:setName("ParrySpam")
-		:setLabel("Spam: OFF")
-		:autoDeselect(false)
-
-	local vis = Icon.new()
-		:setName("ParryVis")
-		:setLabel("Visualizer: ON")
-		:autoDeselect(false)
-
-	local fx = Icon.new()
-		:setName("ParryFx")
-		:setLabel("FX Clean: ON")
-		:autoDeselect(false)
-
-	root:setMenu({
-		spam,
-		vis,
-		fx
-	})
-
-	local c1 = spam.selected:Connect(function()
-		if syncIcon then
-			return
-		end
-		setSpam(true)
-	end)
-
-	local c2 = spam.deselected:Connect(function()
-		if syncIcon then
-			return
-		end
-		setSpam(false)
-	end)
-
-	local c3 = vis.selected:Connect(function()
-		if syncIcon then
-			return
-		end
-		setVis(true)
-	end)
-
-	local c4 = vis.deselected:Connect(function()
-		if syncIcon then
-			return
-		end
-		setVis(false)
-	end)
-
-	local c5 = fx.selected:Connect(function()
-		if syncIcon then
-			return
-		end
-		setFx(true)
-	end)
-
-	local c6 = fx.deselected:Connect(function()
-		if syncIcon then
-			return
-		end
-		setFx(false)
-	end)
-
-	if root.addToJanitor then
-		root:addToJanitor(c1)
-		root:addToJanitor(c2)
-		root:addToJanitor(c3)
-		root:addToJanitor(c4)
-		root:addToJanitor(c5)
-		root:addToJanitor(c6)
-
-		root:addToJanitor(function()
-			dead = true
-			clearBind()
-			spamConn = disc(spamConn)
-			charConn = disc(charConn)
-			fxConn = disc(fxConn)
-		end)
-	end
-
-	mob = {
-		root = root,
-		spam = spam,
-		vis = vis,
-		fx = fx
-	}
-
-	updIcons()
-end)
-
-charConn = lp.CharacterAdded:Connect(function(ch)
-	task.defer(bind, ch)
-end)
-
-if lp.Character then
-	task.defer(bind, lp.Character)
-end
-
-do
-	local function chk(inst)
-		if dead or not cfg.fx then
-			return
-		end
-
-		if not inst or not inst.Parent then
-			return
-		end
-
-		if not inst:IsDescendantOf(WS) then
-			return
-		end
-
-		local n = inst.Name
-		if type(n) ~= "string" or n == "" then
-			return
-		end
-
-		local l = n:lower()
-		if delMap[l] or l:find("ballhit", 1, true) or l:find("slasheffect", 1, true) then
-			pcall(function()
-				inst:Destroy()
-			end)
-		end
-	end
-
-	for _, d in WS:GetDescendants() do
-		task.defer(chk, d)
-	end
-
-fxConn = WS.DescendantAdded:Connect(function(inst)
-		task.defer(chk, inst)
-	end)
-end
-
-cleanup = function()
-	dead = true
-	clearBind()
-	spamConn = disc(spamConn)
-	charConn = disc(charConn)
-	fxConn = disc(fxConn)
-	if mob and mob.root and type(mob.root.destroy) == "function" then
-		pcall(function()
-			mob.root:destroy()
-		end)
-	end
-	gEnv.__na_aex = nil
-	gEnv.__na_aex_cleanup = nil
-end
-
-gEnv.__na_aex_cleanup = cleanup
+local LuckTab = Window:Tab({ Title = "Luck Zone", Icon = "map-pin" })
+
+LuckTab:Toggle({
+    Title = "Teleport To Luck Zones",
+    Desc = "Teleports to 10x/5x/2x luck zones everytime it spawns",
+    Flag = "AutoLuck",
+    Value = Settings.AutoLuck,
+    Callback = function(state)
+        Settings.AutoLuck = state
+        if state then
+            spawn(function()
+                while Settings.AutoLuck do
+                    pcall(function()
+                        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+                        local hrp = player.Character.HumanoidRootPart
+
+                        local targetArea = workspace:FindFirstChild("10") or workspace:FindFirstChild("5") or workspace:FindFirstChild("2")
+                        if targetArea then
+                            local touchPart = targetArea:FindFirstChild("Touch")
+                            if touchPart and touchPart:IsA("BasePart") then
+                                local distance = (hrp.Position - touchPart.Position).Magnitude
+                                local currentTime = tick()
+
+                                if distance > 5 and (currentTime - lastTeleportTime) >= TELEPORT_COOLDOWN then
+                                    hrp.CFrame = touchPart.CFrame + Vector3.new(0, 2, 0)
+
+                                    local times = Settings.AutoLuckTimes
+                                    if times > 0 then
+                                        local potionMap = {
+                                            { flag = "AutoLuckUseLuck",   byte2 = 11, name = "Luck Potion" },
+                                            { flag = "AutoLuckUseUltra",  byte2 = 17, name = "Ultra Luck Potion" },
+                                            { flag = "AutoLuckUseCash",   byte2 = 11, name = "Cash Potion" },
+                                            { flag = "AutoLuckUseSpeed",  byte2 = 17, name = "Roll Speed Potion" },
+                                        }
+                                        for _, p in ipairs(potionMap) do
+                                            if Settings[p.flag] then
+                                                for i = 1, times do
+                                                    SafeFire(Remote, BuildUseBuffer(p.byte2, p.name))
+                                                    wait(0.1)
+                                                end
+                                            end
+                                        end
+                                    end
+
+                                    lastTeleportTime = currentTime
+                                end
+                            else
+                                firetouchinterest(hrp, targetArea, 0)
+                                wait(0.2)
+                                firetouchinterest(hrp, targetArea, 1)
+                            end
+                        end
+                    end)
+                    wait(1)
+                end
+            end)
+        end
+    end,
+})
+
+LuckTab:Divider()
+
+LuckTab:Paragraph({
+    Title = "Potions to use during teleport",
+    Desc = "Enable the potions you want to auto‑use, and set how many times each.",
+})
+
+LuckTab:Toggle({
+    Title = "Use Luck Potion",
+    Flag = "AutoLuckUseLuck",
+    Value = Settings.AutoLuckUseLuck,
+    Callback = function(state)
+        Settings.AutoLuckUseLuck = state
+    end,
+})
+
+LuckTab:Toggle({
+    Title = "Use Ultra Luck Potion",
+    Flag = "AutoLuckUseUltra",
+    Value = Settings.AutoLuckUseUltra,
+    Callback = function(state)
+        Settings.AutoLuckUseUltra = state
+    end,
+})
+
+LuckTab:Toggle({
+    Title = "Use Cash Potion",
+    Flag = "AutoLuckUseCash",
+    Value = Settings.AutoLuckUseCash,
+    Callback = function(state)
+        Settings.AutoLuckUseCash = state
+    end,
+})
+
+LuckTab:Toggle({
+    Title = "Use Roll Speed Potion",
+    Flag = "AutoLuckUseSpeed",
+    Value = Settings.AutoLuckUseSpeed,
+    Callback = function(state)
+        Settings.AutoLuckUseSpeed = state
+    end,
+})
+
+LuckTab:Input({
+    Title = "Times per potion",
+    Desc = "Number of times to use each enabled potion (type 0 to skip)",
+    Icon = "hash",
+    Placeholder = "Enter number...",
+    Value = tostring(Settings.AutoLuckTimes),
+    Flag = "AutoLuckTimes",
+    Callback = function(text)
+        local num = tonumber(text)
+        if num then
+            Settings.AutoLuckTimes = math.max(0, math.floor(num))
+        end
+    end,
+})
+
+local EggTab = Window:Tab({ Title = "Egg", Icon = "egg" })
+
+EggTab:Toggle({
+    Title = "Auto Open Rainbow Egg",
+    Desc = "Teleports to the Rainbow Egg And Opens It",
+    Flag = "AutoOpenEggs",
+    Value = Settings.AutoOpenEggs,
+    Callback = function(state)
+        Settings.AutoOpenEggs = state
+        if state then
+            spawn(function()
+                while Settings.AutoOpenEggs do
+                    pcall(function()
+                        local proxPart = workspace:FindFirstChild("Eggs") and workspace.Eggs:FindFirstChild("Rainbow Egg") and workspace.Eggs["Rainbow Egg"]:FindFirstChild("ProxPart")
+                        if not proxPart then return end
+                        local prompt = proxPart:FindFirstChild("ProximityPrompt")
+                        if not prompt or not prompt:IsA("ProximityPrompt") then return end
+
+                        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            hrp.CFrame = CFrame.new(proxPart.Position + Vector3.new(0, 2, 0))
+                            wait(0.2)
+                        end
+                        fireproximityprompt(prompt, 1)
+                    end)
+                    wait(2)
+                end
+            end)
+        end
+    end,
+})
+
+local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
+
+SettingsTab:Paragraph({
+    Title = "Configuration",
+    Desc = "Save or load your current toggle states.",
+})
+
+SettingsTab:Button({
+    Title = "Save Config",
+    Desc = "Save all current settings",
+    Icon = "save",
+    Callback = function()
+        local cfg = Window.ConfigManager:CreateConfig("default")
+        cfg:Save()
+        WindUI:Notify({ Title = "Saved!", Content = "Configuration saved.", Duration = 2 })
+    end,
+})
+
+SettingsTab:Button({
+    Title = "Load Config",
+    Desc = "Load previously saved settings",
+    Icon = "rotate-ccw",
+    Callback = function()
+        local cfg = Window.ConfigManager:CreateConfig("default")
+        cfg:Load()
+        WindUI:Notify({ Title = "Loaded!", Content = "Configuration loaded.", Duration = 2 })
+    end,
+})
+
+SettingsTab:Divider()
+
+SettingsTab:Paragraph({
+    Title = "Theme",
+    Desc = "Change the UI theme.",
+})
+
+local themeNames = {
+    "Dark", "Light", "Rose", "Plant", "Indigo", "Sky", "Violet", "Amber",
+    "Coral", "Lime", "Mint", "Lavender", "Graphite",
+}
+SettingsTab:Dropdown({
+    Title = "Select Theme",
+    Values = themeNames,
+    Value = "Dark",
+    Callback = function(selected)
+        WindUI:SetTheme(selected)
+    end,
+})
+
+local ContactTab = Window:Tab({ Title = "Contact", Icon = "message-circle" })
+
+ContactTab:Paragraph({
+    Title = "Feedback & Bug Reports",
+    Desc = "If you find any bugs or have any ideas that you want me to add in this script feel free to DM me.",
+    Buttons = {
+        {
+            Title = "Copy Discord Username",
+            Icon = "copy",
+            Callback = function()
+                setclipboard("floxy_wha")
+                WindUI:Notify({ Title = "Copied!", Content = "Discord username copied to clipboard.", Duration = 2 })
+            end,
+        },
+    },
+})
+
+repeat wait() until player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+wait(1)
